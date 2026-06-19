@@ -1,0 +1,50 @@
+# HP 7475A Graphics Plotter profile.
+#
+# Facts sourced from the HP Interfacing and Programming Manual
+# (doc FFONS49JUMXQZJH) and the 7475A short-form. Values that depend on the
+# physical setup (the actual buffer size, hard-clip limits) should be confirmed
+# against the device at runtime via ESC.L / OH rather than trusted blindly.
+
+model = "7475A"
+vendor = "HP"
+
+# Documented buffer is ~1024 bytes; ESC.L reports the true size at runtime.
+buffer_bytes = 1024
+
+# Six pen stalls. The user may have fewer pens physically loaded.
+pen_count = 6
+
+# The 7475A has no pen-presence sensor: a missing or fallen pen is undetectable
+# (it plots dry) and SP only errors on an out-of-range parameter, not an empty
+# stall. So we cannot verify pens electronically - only pre-flight by listing
+# the pens a file needs for the operator to load.
+pen_sensing = false
+
+interfaces = ["rs232"]
+
+[serial_defaults]
+baud = 9600
+framing = "8N1"   # 8 data bits, no parity, 1 stop bit
+
+[limits]
+# Plotter units per millimetre (40 units/mm == ~1016 units/inch).
+units_per_mm = 40
+# Hard-clip limits vary with paper size (A4/A/B); query OH at runtime.
+# Measured on-site (A4 landscape, 2026-06-18): OH -> 0,0,11040,7721.
+hard_clip = "device-reported"
+
+[capabilities]
+# Immediate device-control instructions (processed at once, not buffered).
+buffer_space = "ESC.B"      # free bytes, 0-255
+buffer_size = "ESC.L"       # total buffer size in bytes
+io_error = "ESC.E"          # RS-232 I/O error number, clears ERROR light
+extended_status = "ESC.O"   # extended status word
+set_config = "ESC.@"        # configuration / monitor-mode control
+abort_graphics = "ESC.K"    # abort + discard buffer
+abort_control = "ESC.J"     # abort partial device-control instruction
+# Buffered HP-GL output (status) instructions.
+status = "OS"
+error = "OE"
+identify = "OI"
+actual_position = "OA"
+hard_clip_limits = "OH"

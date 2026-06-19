@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hpgl-buddy"
+dynamic = ["version"]
+description = "Carefree, observable plotting of HP-GL files on HP pen plotters over RS-232."
+readme = "README.md"
+requires-python = ">=3.13"
+license = { text = "MIT" }
+authors = [{ name = "Pavel Kim", email = "hello@pavelkim.com" }]
+keywords = ["hpgl", "plotter", "hp7475a", "rs232", "pen-plotter"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Printing",
+    "Topic :: System :: Hardware :: Hardware Drivers",
+]
+
+# pyserial is the sole runtime dependency. TOML profiles are read with the
+# standard-library tomllib (Python 3.11+), so no extra parser is needed.
+dependencies = ["pyserial>=3.5"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.urls]
+Homepage = "https://github.com/hpgl-buddy/hpgl-buddy"
+Repository = "https://github.com/hpgl-buddy/hpgl-buddy"
+Issues = "https://github.com/hpgl-buddy/hpgl-buddy/issues"
+
+[project.scripts]
+hpgl-buddy = "hpgl_buddy.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "hpgl_buddy.version.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+hpgl_buddy = ["devices/profiles/*.toml"]
