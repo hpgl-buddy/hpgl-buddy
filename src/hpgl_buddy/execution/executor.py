@@ -85,6 +85,7 @@ class Executor:
         prompt_handler: Callable[[Chunk, int, str, str], str] | None = None,
         sync_timeout_seconds: float = 90.0,
         drain_timeout_seconds: float = 600.0,
+        send_block_bytes: int = 256,
         verify_mode: VerifyMode = VerifyMode.OFF,
     ) -> None:
         self.transport = transport
@@ -96,6 +97,10 @@ class Executor:
         # tailgate (pen-change-heavy plots can run minutes).
         self.sync_timeout_seconds = sync_timeout_seconds
         self.drain_timeout_seconds = drain_timeout_seconds
+        # Max bytes written per ESC.B-gated sub-block. Must be <= the device
+        # buffer; an instruction larger than the buffer is streamed across
+        # several of these (see _send_raw).
+        self.send_block_bytes = max(1, min(send_block_bytes, flow_controller.buffer_size_bytes))
         self.verify_mode = verify_mode
         # Latest raw bytes of each tracked state instruction, plus last PA.
         self._preamble: dict[str, bytes] = {}
@@ -124,9 +129,21 @@ class Executor:
     # --- low-level send ----------------------------------------------------
 
     def _send_raw(self, data: bytes) -> None:
-        """Wait for buffer room, then write raw bytes."""
-        self.flow.wait_for_space(len(data))
-        self.transport.write(data)
+        """Write bytes to the device, paced so the buffer never overflows.
+
+        Sent in sub-blocks of at most ``send_block_bytes`` (<= the device
+        buffer), each gated on ESC.B free space. A single instruction larger
+        than the buffer is thus streamed across several sub-blocks without being
+        split as HP-GL - the plotter reassembles partial numbers from the byte
+        stream as it parses. This is how oversized instructions are plotted.
+        """
+        offset = 0
+        total = len(data)
+        while offset < total:
+            block = data[offset : offset + self.send_block_bytes]
+            self.flow.wait_for_space(len(block))
+            self.transport.write(block)
+            offset += len(block)
 
     # --- recovery / abort --------------------------------------------------
 
@@ -334,9 +351,18 @@ class Executor:
             payload = chunk.raw_bytes
             span_to_verify: list[Chunk] | None = None
             if pending:
-                payload = tailgate_command() + chunk.raw_bytes
-                span_to_verify = unverified
                 pending = False
+                if chunk.oversized:
+                    # An oversized chunk is streamed in several ESC.B-gated
+                    # sub-blocks; a prefixed verdict reply would interleave those
+                    # polls. Read the pending verdict standalone first (it blocks
+                    # until the previous chunk finished drawing).
+                    self.transport.write(tailgate_command())
+                    self._read_verdict(unverified, progress, final=False)
+                    unverified = []
+                else:
+                    payload = tailgate_command() + chunk.raw_bytes
+                    span_to_verify = unverified
 
             self._send_raw(payload)
             progress.record_chunk_sent(len(chunk.instructions), chunk.byte_size)

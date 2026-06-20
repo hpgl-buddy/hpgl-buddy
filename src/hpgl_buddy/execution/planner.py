@@ -89,11 +89,14 @@ def plan_chunks(
         instruction_size = len(instruction.raw_bytes)
 
         if instruction_size > max_chunk_bytes:
-            # Cannot fit even alone; emit it as its own oversized chunk and warn.
+            # Larger than a whole chunk; emit it as its own oversized chunk. The
+            # executor streams it in ESC.B-gated sub-blocks (it is never split as
+            # HP-GL). A pen-down instruction this large risks underrun only if the
+            # wire cannot keep up with the draw - inherent to the baud rate.
             flush()
-            logger.warning(
-                "Instruction %s is %d bytes, exceeding the %d-byte chunk budget; "
-                "sending it alone (underrun risk if pen is down)",
+            logger.info(
+                "Instruction %s is %d bytes (larger than the %d-byte chunk budget); "
+                "it will be streamed in sub-blocks",
                 instruction,
                 instruction_size,
                 max_chunk_bytes,

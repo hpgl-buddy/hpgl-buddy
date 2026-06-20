@@ -1,5 +1,9 @@
 # hpgl-buddy
 
+[![PyPI version](https://img.shields.io/pypi/v/hpgl-buddy.svg)](https://pypi.org/project/hpgl-buddy/)
+[![Python versions](https://img.shields.io/pypi/pyversions/hpgl-buddy.svg)](https://pypi.org/project/hpgl-buddy/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/hpgl-buddy/hpgl-buddy/blob/master/LICENSE)
+
 Carefree, observable plotting of HP-GL files on HP pen plotters over RS-232.
 
 It does not just shove a file at the plotter: it validates the file, splits it to fit
@@ -7,22 +11,22 @@ the device buffer, feeds it so the buffer never overflows and an inked pen never
 mid-stroke, watches the device for faults the whole time, and logs every exchange so a
 run can be understood and troubleshooted from the log alone.
 
-**Supported device:** HP 7475A (RS-232). New devices are added as declarative profiles
+**Supported devices:** 
+
+* HP 7475A (RS-232). New devices are added as declarative profiles
 (see [Extending](#extending)); HP-IB is planned.
 
 ---
 
 ## Install
 
-Requires Python 3.13 and a USB-serial adapter (macOS: use the `/dev/cu.*` device).
-
 ```bash
-pip install -e .          # editable, for development
-# or build a wheel:
-python -m build --wheel   # -> dist/hpgl_buddy-*.whl  (or: tox -e build)
+pip install hpgl-buddy
 ```
 
-`pyserial` is the only runtime dependency.
+Requires Python 3.13 and a USB-serial adapter (on macOS use the `/dev/cu.*` device).
+`pyserial` is the only runtime dependency. To work on hpgl-buddy itself, see
+[Development](#development).
 
 ---
 
@@ -43,6 +47,8 @@ hpgl-buddy demo --pens 6 --out demo.hpgl
 hpgl-buddy plot demo.hpgl --port /dev/cu.usbserial-XXXX
 ```
 
+Sample HP-GL files live in [`examples/`](https://github.com/hpgl-buddy/hpgl-buddy/tree/master/examples).
+
 Serial defaults: **9600 8N1, no flow control** (configurable). Flow control is off by
 default because XON/XOFF corrupted the exchange on the on-site adapter; enable it with
 `--xonxoff` if your cabling needs it.
@@ -57,7 +63,7 @@ default because XON/XOFF corrupted the exchange on the on-site adapter; enable i
 | `status` | Ad-hoc healthcheck: identification, buffer, status byte, errors, limits - all interpreted. |
 | `plot FILE` | Safe, buffer-aware plotting with progress + end-of-run report. |
 | `monitor on\|off\|watch` | Switch monitor mode (computer port) or stream the echoed bytes (terminal port). |
-| `demo` | Generate demo HP-GL (`--scene card` shapes/fills/labels/colours, or `--scene house` a continuous one-line drawing). |
+| `demo` | Generate demo HP-GL: `--scene card` (shapes/fills/labels/colours grid) or `--scene house` (a one-line drawing emitted as a single giant `PD` instruction - the >1024-byte oversized-instruction case, streamed in sub-blocks). |
 
 Global: `-v/--verbose` (DEBUG, incl. raw ASCII+hex wire dumps), `--version`.
 
@@ -101,7 +107,10 @@ file -> parse -> offline syntax check -> plan into chunks -> stream to device ->
    a command), each tagged whether it ends with the pen up.
 4. **Stream**: a chunk is sent only when `ESC.B` reports enough free buffer space. This one
    gate both prevents overflow and keeps the buffer fed, so a long pen-down stroke spanning
-   several chunks never underruns (an underrun would park an inked pen and blot).
+   several chunks never underruns (an underrun would park an inked pen and blot). An
+   instruction *larger than the buffer* (e.g. a single huge `PD` polyline) is streamed
+   across several `ESC.B`-gated sub-blocks - never split as HP-GL, since the plotter
+   reassembles the byte stream as it parses - so it plots like any other.
 5. **Watch** (always on, after each chunk): `ESC.E` for I/O faults (overflow / framing /
    data loss) and `ESC.O` for environmental faults (paper lever or pinch wheels raised ->
    abort; VIEW pressed -> warn). Both are immediate and never stall the pen.
@@ -128,6 +137,10 @@ of chunks it could belong to with all candidate instructions.
 
 - **No pen sensing on the 7475A**: a missing or fallen pen plots dry and is *not* detectable
   by any status query. Pre-load the pens your file uses. (`plot` warns about this.)
+- **Throughput is bound by the baud rate**: a huge pen-down instruction with very short
+  segments can outrun a 9600-baud link no matter how we feed it (the pen draws faster than
+  bytes arrive). hpgl-buddy always feeds as fast as the buffer allows; raise the baud if a
+  dense drawing dwells.
 
 ---
 
@@ -144,8 +157,8 @@ execution/  planner (Program -> chunks) + flow control + executor + progress/rep
 demo/       demo HP-GL generators
 ```
 
-The authoritative design rationale (with HP manual citations) lives in `DESIGN.md`; the
-running decision log is the "Follow-up steering" section of `TASK-1-BASIC-IMPLEMENTATION.md`.
+The full design rationale, with HP manual citations, lives in
+[`DESIGN.md`](https://github.com/hpgl-buddy/hpgl-buddy/blob/master/DESIGN.md).
 
 ### Extending
 
@@ -159,8 +172,9 @@ can be added as another `Transport` without touching the rest.
 ## Development
 
 ```bash
-tox            # run the test suite (Python 3.13)
-tox -e build   # build the wheel
+pip install -e ".[dev]"   # editable install with test dependencies
+tox                       # run the test suite (Python 3.13)
+tox -e build              # build the sdist + wheel
 ```
 
 Dependencies are managed two-file style: `requirements-rough.txt` (hand-maintained,

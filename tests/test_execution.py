@@ -92,10 +92,19 @@ class _FakeDevice(Transport):
 
 
 def _make_executor(
-    device: _FakeDevice, policy: ErrorPolicy, verify_mode: VerifyMode = VerifyMode.OFF
+    device: _FakeDevice,
+    policy: ErrorPolicy,
+    verify_mode: VerifyMode = VerifyMode.OFF,
+    send_block_bytes: int = 256,
 ) -> Executor:
     flow = FlowController(device, buffer_size_bytes=1024, poll_interval_seconds=0)
-    return Executor(device, flow, error_policy=policy, verify_mode=verify_mode)
+    return Executor(
+        device,
+        flow,
+        error_policy=policy,
+        verify_mode=verify_mode,
+        send_block_bytes=send_block_bytes,
+    )
 
 
 def test_executor_happy_path_sends_everything():
@@ -270,31 +279,70 @@ def test_read_tailgate_aligns_despite_slow_first_response():
     assert result.model_tag == "7475A"
 
 
-def test_scene_is_one_long_pen_down_stroke_in_bounds():
+def test_scene_is_one_giant_pen_down_instruction_in_bounds():
     import re
 
     from hpgl_buddy.demo import generate_scene
 
     program = parse_hpgl(generate_scene(timestamp="2026-06-19 00:00"))
-    mnemonics = [instruction.mnemonic for instruction in program]
-    # Exactly one pen-down, and the move run before the next pen-up exceeds 4 KB.
-    assert mnemonics.count("PD") == 1
-    pen_down_index = mnemonics.index("PD")
-    pen_up_index = mnemonics.index("PU", pen_down_index)
-    pen_down_bytes = sum(
-        len(program.instructions[i].raw_bytes)
-        for i in range(pen_down_index + 1, pen_up_index)
-    )
-    assert pen_down_bytes > 4096
+    # The whole drawing is a single PD instruction larger than the 1024-byte
+    # device buffer (the huge-instruction case).
+    pen_downs = [i for i in program if i.mnemonic == "PD"]
+    assert len(pen_downs) == 1
+    assert len(pen_downs[0].raw_bytes) > 1024
 
     assert not [f for f in check_program(program) if f.severity == "error"]
     xs, ys = [], []
     for instruction in program:
-        if instruction.mnemonic in ("PU", "PD", "PA"):
+        if instruction.mnemonic in ("PU", "PD"):
             nums = [int(n) for n in re.findall(r"-?\d+", instruction.parameter_text)]
             xs += nums[0::2]
             ys += nums[1::2]
     assert max(xs) < 11040 and max(ys) < 7721
+
+
+def test_giant_scene_instruction_is_flagged_oversized_by_planner():
+    # The single huge PD is larger than a whole chunk, so the planner marks it
+    # oversized; the executor then streams it in sub-blocks (see the streaming
+    # test below).
+    from hpgl_buddy.demo import generate_scene
+
+    chunks = plan_chunks(parse_hpgl(generate_scene(timestamp="t")), max_chunk_bytes=256)
+    assert any(chunk.oversized for chunk in chunks)
+
+
+def test_executor_streams_oversized_instruction_in_subblocks():
+    # An instruction larger than the buffer must be streamed in pieces, not
+    # refused; every byte is delivered in order.
+    coords = ",".join(f"{i},{i}" for i in range(400))
+    program = parse_hpgl(f"SP1;PD{coords};PU;".encode())
+    chunks = plan_chunks(program, max_chunk_bytes=256)
+    assert any(chunk.oversized for chunk in chunks)
+
+    device = _FakeDevice()
+    progress = _make_executor(device, ErrorPolicy.ABORT, send_block_bytes=256).run(
+        chunks, ProgressState()
+    )
+    # The oversized chunk went out as multiple sub-blocks (more writes than chunks).
+    assert len(device.data_writes) > len(chunks)
+    # ...but the reconstructed byte stream is exactly the program, in order.
+    assert b"".join(device.data_writes) == b"".join(i.raw_bytes for i in program)
+    assert progress.chunks_sent == len(chunks)
+
+
+def test_verify_mode_reads_standalone_verdict_before_oversized_chunk():
+    # SP1 (pen-up) arms a checkpoint; the next chunk is the oversized PD. The
+    # verdict must be read standalone before streaming it (not prefixed), and the
+    # run completes with every byte delivered.
+    coords = ",".join(f"{i},{i}" for i in range(400))
+    program = parse_hpgl(f"SP1;PD{coords};PU;".encode())
+    chunks = plan_chunks(program, max_chunk_bytes=256)
+    device = _FakeDevice()
+    progress = _make_executor(
+        device, ErrorPolicy.ABORT, VerifyMode.CHUNK, send_block_bytes=256
+    ).run(chunks, ProgressState())
+    assert b"".join(device.data_writes) == b"".join(i.raw_bytes for i in program)
+    assert progress.chunks_sent == len(chunks)
 
 
 def test_progress_to_dict_is_json_serializable():

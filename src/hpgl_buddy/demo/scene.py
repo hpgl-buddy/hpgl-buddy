@@ -1,17 +1,15 @@
-"""A continuous one-line "kid drawing" demo: house, human, car, trees, sun,
-clouds, and grass - drawn as a single pen-down stroke with no pen-up until the
-very end.
+"""A one-line "kid drawing" demo: house, human, car, trees, sun, clouds, and
+grass - the whole picture emitted as a SINGLE giant PD instruction.
 
-Purpose: the card demo (see generator.py) ends almost every chunk pen-up, so it
-never exercises a pen-down run that spans several buffer fills. This scene is
-one long stroke (>4 KB of pen-down moves), so the planner produces many
-mid-stroke chunks and the executor must keep the buffer fed via ESC.B alone,
-without a tailgate pause, or the pen would dwell and blot. It is the real test
-of the underrun-prevention path.
+Purpose: this is the >1024-byte single-instruction case. The entire drawing is
+one `PD x1,y1,x2,y2,...;` coordinate list (several KB), so it exceeds the 7475A
+buffer in one instruction. The executor plots it by streaming the instruction's
+bytes in ESC.B-gated sub-blocks (it is never split as HP-GL; the plotter
+reassembles partial numbers). This scene is the acceptance fixture for that
+oversized-instruction streaming. (The `card` scene is the ordinary demo.)
 
 The whole picture is one connected polyline; the straight "travel" lines
-between elements are left visible on purpose (it looks hand-drawn and keeps the
-pen down throughout).
+between elements are left visible on purpose (it looks hand-drawn).
 """
 
 from __future__ import annotations
@@ -142,21 +140,26 @@ def generate_scene(timestamp: str | None = None) -> bytes:
     # Clamp defensively so nothing rides the hard-clip edge.
     path = [(min(max(px, 0), MAX_X + 200), min(max(py, 0), MAX_Y)) for px, py in path]
 
-    lines = ["IN;", "SP1;", f"PU{path[0][0]},{path[0][1]};", "PD;"]
-    lines += [f"PA{px},{py};" for px, py in path[1:]]
-    lines.append("PU;")
-
-    # Footer (pen up), then park.
-    lines += [
+    # The whole drawing is emitted as ONE giant PD instruction (every point in a
+    # single coordinate list), so it deliberately exceeds the device buffer. This
+    # is the >1024-byte single-instruction case - see GitHub issue "huge
+    # instruction support". The current executor refuses it as oversized; it will
+    # plot once byte-level streaming of oversized instructions lands (v1.1.0).
+    coordinates = ",".join(f"{px},{py}" for px, py in path[1:])
+    giant_pen_down = f"PD{coordinates};"
+    lines = [
+        "IN;", "SP1;", f"PU{path[0][0]},{path[0][1]};",
+        giant_pen_down,
+        "PU;",
+        # Footer (pen up), then park.
         "SP1;", "PU400,300;", "SI0.20,0.25;",
         f"LBhpgl-buddy v{__version__}  -  {timestamp} (scene){LABEL_TERMINATOR}",
         "PU0,0;", "SP0;",
     ]
 
     program_bytes = "\n".join(lines).encode("latin-1")
-    pen_down_bytes = len("\n".join(f"PA{px},{py};" for px, py in path[1:]).encode())
     logger.info(
-        "Generated scene: %d points, %d bytes (%d in one pen-down stroke)",
-        len(path), len(program_bytes), pen_down_bytes,
+        "Generated scene: %d points in one %d-byte PD instruction (%d bytes total)",
+        len(path), len(giant_pen_down), len(program_bytes),
     )
     return program_bytes

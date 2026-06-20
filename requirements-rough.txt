@@ -1,16 +1,1 @@
-# Rough, human-maintained top-level requirements (intentionally loose).
-#
-# Exact, fully-transitive pins live in requirements.txt, which is generated
-# from THIS file by the "dependencies_update" GitHub Actions workflow:
-#   clean env -> pip install -r requirements-rough.txt -> pip freeze -> diff
-#   -> update requirements.txt on demand.
-#
-# Edit this file to add/raise a dependency; never hand-edit requirements.txt.
-
-# --- runtime ---
-pyserial>=3.5
-
-# --- tooling: tests, wheel build, task runner ---
-pytest>=8
-build>=1.2
-tox>=4
+pyserial>=3.5,<4.0

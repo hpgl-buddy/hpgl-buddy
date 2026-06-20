@@ -3,12 +3,12 @@
 Subcommands:
     check    - offline HP-GL syntax check (no device).
     status   - ad-hoc plotter healthcheck over RS-232.
-    monitor  - switch the plotter's monitor mode on or off.
-    plot     - safe, buffer-aware plotting of a file (in progress).
-    demo     - generate demo HP-GL for a pen count (in progress).
+    monitor  - switch the plotter's monitor mode, or watch the echoed bytes.
+    plot     - safe, buffer-aware plotting of an HP-GL file.
+    demo     - generate demo HP-GL (card grid or house line-drawing).
 
-The CLI never uses print; all output goes through logging so a run can be
-fully reconstructed from the log.
+Output goes through logging only (never print), so a run can be fully
+reconstructed from the log.
 """
 
 from __future__ import annotations
@@ -214,6 +214,7 @@ def _handle_plot(args: argparse.Namespace) -> int:
             flow_controller,
             error_policy=policy,
             prompt_handler=_stdin_prompt if policy is ErrorPolicy.PROMPT else None,
+            send_block_bytes=chunk_budget,
             verify_mode=verify_mode,
         )
         executor.run(chunks, progress)
@@ -298,7 +299,7 @@ def build_parser() -> argparse.ArgumentParser:
     plot_parser.set_defaults(handler=_handle_plot)
 
     demo_parser = subparsers.add_parser("demo", help="generate demo HP-GL")
-    demo_parser.add_argument("--scene", choices=["card", "house"], default="card", help="'card' = shapes/fills/labels/colours grid; 'house' = one continuous pen-down line drawing")
+    demo_parser.add_argument("--scene", choices=["card", "house"], default="card", help="'card' = shapes/fills/labels/colours grid; 'house' = one giant >1024-byte PD instruction (oversized-instruction case, streamed in sub-blocks)")
     demo_parser.add_argument("--pens", type=int, default=1, help="number of pens to exercise for the card scene (1-6)")
     demo_parser.add_argument("--out", default=None, help="output file (default: stdout)")
     demo_parser.set_defaults(handler=_handle_demo)

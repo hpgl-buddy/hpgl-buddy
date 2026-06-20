@@ -177,11 +177,19 @@ an `ESC.B` drain threshold.
 ## 7. Execution model + fault tolerance
 
 - `planner` turns the Program into a queue of Chunks honoring section 3 rules.
-- **Command supply is gated only by buffer space.** Per chunk: `wait_for_space(size)`
-  polls `ESC.B` until `free_bytes >= chunk_size`, then write. Nothing about pen state -
-  just "is there room for this <=256-byte chunk in the 1024-byte buffer?". This single
-  gate keeps the pen fed (a long pen-down run split across chunks streams as the buffer
-  drains, so it never underruns) and never stalls the pen.
+- **Command supply is gated only by buffer space.** Every write goes out in sub-blocks of
+  at most `send_block_bytes` (<= the buffer), each gated by `wait_for_space(block)` which
+  polls `ESC.B` until `free_bytes >= block`, then writes. Nothing about pen state - just
+  "is there room?". This single gate keeps the pen fed (a long pen-down run streams as the
+  buffer drains, so it never underruns) and never stalls the pen.
+- **Oversized instructions (> buffer) are streamed, not split.** An instruction larger
+  than a whole chunk is emitted as one `oversized` chunk; the sub-block sender above feeds
+  its raw bytes in `ESC.B`-gated pieces. The plotter parses the byte stream incrementally
+  and reassembles partial numbers across sub-block boundaries, so the instruction is never
+  split as HP-GL - that is how a single huge `PD` polyline (common in vector exports)
+  plots. In a live verify mode the pending verdict is read *standalone before* an oversized
+  chunk (rather than prefixed), because its multi-block streaming would otherwise interleave
+  the verdict reply with the `ESC.B` polls.
 - **Always-on environmental watch (the run-time faults).** After each chunk the executor
   reads two immediate device-control queries - no pen stall:
   - `ESC.E` - RS-232 I/O errors (overflow / framing / data-loss). Handled by the error
