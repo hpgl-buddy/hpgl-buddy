@@ -62,7 +62,7 @@ default because XON/XOFF corrupted the exchange on the on-site adapter; enable i
 | `check FILE` | Offline HP-GL syntax check. No device. Exit non-zero on errors. |
 | `status` | Ad-hoc healthcheck: identification, buffer, status byte, errors, limits - all interpreted. |
 | `plot FILE` | Safe, buffer-aware plotting with progress + end-of-run report. |
-| `monitor on\|off\|watch` | Switch monitor mode (computer port) or stream the echoed bytes (terminal port). |
+| `monitor enable\|disable\|watch` | Enable/disable monitor mode (computer port) or stream the echoed bytes (terminal port). |
 | `demo` | Generate demo HP-GL: `--scene card` (shapes/fills/labels/colours grid) or `--scene house` (a one-line drawing emitted as a single giant `PD` instruction - the >1024-byte oversized-instruction case, streamed in sub-blocks). |
 
 Global: `-v/--verbose` (DEBUG, incl. raw ASCII+hex wire dumps), `--version`.
@@ -83,14 +83,19 @@ Serial options (on `status`/`plot`/`monitor`): `--port`, `--model` (default `hp7
 ### monitor (two ports)
 
 The 7475A enables monitor mode via an ESC sequence on the **computer** (data) port, then
-echoes received bytes out a separate **terminal** port. So:
+echoes the bytes it receives out a separate **terminal** port - so it's two single-purpose
+commands, one per port:
 
 ```bash
-# stream the echo on the terminal port, enabling monitor on the computer port first
-hpgl-buddy monitor watch --port /dev/cu.TERMINAL --command-port /dev/cu.COMPUTER --enable
+hpgl-buddy monitor enable  --port /dev/cu.COMPUTER   # turn monitor mode on (data port)
+hpgl-buddy monitor watch   --port /dev/cu.TERMINAL   # stream the echo (terminal port)
+hpgl-buddy monitor disable --port /dev/cu.COMPUTER   # turn it off when done
 ```
 
-`watch` prints every byte as binary, hex, decimal, and ASCII/control-name.
+There are two monitor modes (`enable --mode received|parsed`): **`received`** (default)
+echoes every byte as it arrives, including ESC device-control sequences; **`parsed`**
+echoes only HP-GL as the plotter parses it from the buffer. `watch` prints every byte as
+binary, hex, decimal, and ASCII/control-name.
 
 ---
 

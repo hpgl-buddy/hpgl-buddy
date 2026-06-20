@@ -181,15 +181,22 @@ an `ESC.B` drain threshold.
   at most `send_block_bytes` (<= the buffer), each gated by `wait_for_space(block)` which
   polls `ESC.B` until `free_bytes >= block`, then writes. Nothing about pen state - just
   "is there room?". This single gate keeps the pen fed (a long pen-down run streams as the
-  buffer drains, so it never underruns) and never stalls the pen.
+  buffer drains, so it never underruns) and never stalls the pen. `send_block_bytes` is
+  sized to hold a whole chunk **plus** a prefixed verify tailgate (`chunk_budget + 64`), so
+  a tailgate-prefixed chunk is always one block - see the verify note below for why the
+  poll between sub-blocks must never fall inside a prefixed payload.
 - **Oversized instructions (> buffer) are streamed, not split.** An instruction larger
   than a whole chunk is emitted as one `oversized` chunk; the sub-block sender above feeds
   its raw bytes in `ESC.B`-gated pieces. The plotter parses the byte stream incrementally
   and reassembles partial numbers across sub-block boundaries, so the instruction is never
   split as HP-GL - that is how a single huge `PD` polyline (common in vector exports)
-  plots. In a live verify mode the pending verdict is read *standalone before* an oversized
-  chunk (rather than prefixed), because its multi-block streaming would otherwise interleave
-  the verdict reply with the `ESC.B` polls.
+  plots. In a live verify mode, whenever a tailgate-prefixed payload would not fit one send
+  block (`len(tailgate) + chunk > send_block_bytes` - any oversized chunk, and any chunk too
+  near the budget once the prefix is added) the pending verdict is read *standalone before*
+  the chunk instead of prefixed. Otherwise `_send_raw` would split the payload and poll
+  `ESC.B` between sub-blocks - and that poll collides with the prefix tailgate's buffered
+  reply, the `ESC.B` read swallowing the `OS` token and desyncing the verdict (an observed
+  field hang). The single-block sizing above keeps normal prefixed chunks off this path.
 - **Always-on environmental watch (the run-time faults).** After each chunk the executor
   reads two immediate device-control queries - no pen stall:
   - `ESC.E` - RS-232 I/O errors (overflow / framing / data-loss). Handled by the error
@@ -310,8 +317,10 @@ hpgl-buddy status                 Ad-hoc healthcheck: identify, OS, OE, ESC.B; p
                                   interpreted values (section follows status_codes).
 hpgl-buddy check  FILE            Offline syntax check, no device.
 hpgl-buddy plot   FILE [--port ... --baud 9600 ...]   Safe plot with full progress log.
-hpgl-buddy monitor (on|off|0|1)   Monitor-mode switching (ESC.@ bits, manual p.168).
-hpgl-buddy demo   --pens N [--out FILE | --plot]      Demo generator (section 12).
+hpgl-buddy monitor (enable|disable|watch)   enable/disable monitor mode on the computer
+                                  port (--mode received|parsed), or watch the echo on the
+                                  terminal port. ESC.@ bits per manual p.168.
+hpgl-buddy demo   [--scene card|house] [--pens N] [--out FILE]   Demo generator (section 12).
 # raw command execution: deferred (task says "not sure we need it right away").
 ```
 
@@ -389,8 +398,6 @@ before relying on them.)
 - State-preamble replay is currently optimistic (folds in all sent state
   instructions); confirm the tracked mnemonic set and roll-back semantics
   against real files (§7).
-- Confirm 7475A profile fields + ESC.@ monitor-mode bit layout (§6/§11) and
-  OA/OH response formats against the manual / hardware.
 - Validate demo registration and "between-lines" placement on paper.
 
 ## Appendix A. Verified command reference (from `hp/FFONS49JUMXQZJH`)

@@ -72,6 +72,10 @@ def read_tailgate_response(
     rather than read with independent per-line timeouts - a slow first reply can
     never shift the later ones into the wrong slot. Returns as soon as all three
     arrive; the OI model tag confirms completion and OE is the error check.
+
+    Each read is terminator-wise (``read_until`` CR), not a fixed-size block: a
+    block read would make the serial layer wait out the whole timeout for bytes
+    that never come (only ~11 arrive), adding ~2 s of dead time per checkpoint.
     """
     deadline = time.monotonic() + timeout_seconds
     last_heartbeat = time.monotonic()
@@ -87,7 +91,10 @@ def read_tailgate_response(
                 len(tokens),
             )
             break
-        chunk = transport.read(64, timeout_seconds=min(2.0, deadline - now))
+        chunk = transport.read_until(
+            escape.DEFAULT_RESPONSE_TERMINATOR,
+            timeout_seconds=min(2.0, deadline - now),
+        )
         if chunk:
             pending.extend(chunk)
             while b"\r" in pending and len(tokens) < 3:

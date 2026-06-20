@@ -3,7 +3,7 @@
 Subcommands:
     check    - offline HP-GL syntax check (no device).
     status   - ad-hoc plotter healthcheck over RS-232.
-    monitor  - switch the plotter's monitor mode, or watch the echoed bytes.
+    monitor  - enable/disable monitor mode (computer port) or watch the echo (terminal port).
     plot     - safe, buffer-aware plotting of an HP-GL file.
     demo     - generate demo HP-GL (card grid or house line-drawing).
 
@@ -41,21 +41,17 @@ EXIT_FAILURE = 3  # transport or other domain failure
 
 # --- transport construction ------------------------------------------------
 
-def _build_transport(args: argparse.Namespace, port: str | None = None) -> SerialTransport:
-    """Build a SerialTransport, taking unset values from the device profile.
-
-    ``port`` overrides ``args.port`` so a single command can address more than
-    one physical connector (e.g. the monitor's computer vs. terminal ports).
-    """
+def _build_transport(args: argparse.Namespace) -> SerialTransport:
+    """Build a SerialTransport for ``args.port``, taking unset values from the
+    device profile."""
     device = get_device(args.model)
-    target_port = port if port is not None else args.port
     baud = args.baud if args.baud is not None else device.profile.serial_defaults.baud
     framing = args.framing or device.profile.serial_defaults.framing
     logger.info(
-        "Target: %s on %s @ %d %s", device.describe(), target_port, baud, framing
+        "Target: %s on %s @ %d %s", device.describe(), args.port, baud, framing
     )
     return SerialTransport(
-        port=target_port,
+        port=args.port,
         baud=baud,
         framing=framing,
         read_timeout_seconds=args.timeout,
@@ -120,35 +116,25 @@ def _handle_status(args: argparse.Namespace) -> int:
 
 def _handle_monitor(args: argparse.Namespace) -> int:
     # On the 7475A, monitor mode is enabled by an ESC sequence sent to the
-    # COMPUTER (data) port; the plotter then echoes received bytes out a
-    # separate TERMINAL port. So 'on'/'off' address the computer port, and
-    # 'watch' reads the terminal port.
+    # COMPUTER (data) port; the plotter then echoes received bytes out a separate
+    # TERMINAL port. The three actions are kept on their own ports:
+    #   enable/disable --port <computer>   watch --port <terminal>
     if args.state == "watch":
-        if args.enable:
-            if not args.command_port:
-                raise HpglBuddyError(
-                    "--enable needs --command-port (the COMPUTER port) to send the "
-                    "monitor-on sequence; --port is the TERMINAL port we read from"
-                )
-            logger.info("Enabling monitor mode (mode %d) on computer port %s", args.mode, args.command_port)
-            with _build_transport(args, port=args.command_port) as computer_port:
-                computer_port.write(escape.monitor_mode(True, display_received=(args.mode == 1)))
-        logger.info("Reading echo on terminal port %s", args.port)
+        logger.info("Watching the monitor echo on %s", args.port)
         with _build_transport(args) as terminal_port:
             watch(terminal_port, duration_seconds=args.seconds)
         return EXIT_OK
 
-    # 'on' / 'off' toggle monitor mode on the computer (data) port.
-    enabled = args.state == "on"
-    command = escape.monitor_mode(enabled, display_received=(args.mode == 1))
+    # enable / disable monitor mode on the computer (data) port.
+    enabled = args.state == "enable"
+    command = escape.monitor_mode(enabled, display_received=(args.mode == "received"))
     with _build_transport(args) as computer_port:
         computer_port.write(command)
     logger.info(
-        "Monitor mode %s requested on %s (mode %d). Echo appears on the terminal port; "
-        "watch it with: hpgl-buddy monitor watch --port <terminal-port>",
-        "ON" if enabled else "OFF",
+        "Monitor mode %s on %s. Watch the echo on the terminal port with: "
+        "hpgl-buddy monitor watch --port <terminal-port>",
+        "ENABLED" if enabled else "DISABLED",
         args.port,
-        args.mode,
     )
     return EXIT_OK
 
@@ -196,6 +182,11 @@ def _handle_plot(args: argparse.Namespace) -> int:
         )
     verify_mode = VerifyMode(args.live_hpgl_verify)
     chunk_budget = min(DEFAULT_MAX_CHUNK_BYTES, max(64, device.buffer_bytes - 128))
+    # A verify-mode tailgate (OS;OE;OI;) is prefixed to a chunk; that prefixed
+    # payload must go out in one ESC.B-gated send block, or the poll between
+    # sub-blocks collides with the tailgate's buffered reply. Size send blocks
+    # to hold a full chunk plus the prefix (capped at the device buffer).
+    send_block_bytes = min(device.buffer_bytes, chunk_budget + 64)
     chunks = plan_chunks(
         program,
         max_chunk_bytes=chunk_budget,
@@ -214,7 +205,7 @@ def _handle_plot(args: argparse.Namespace) -> int:
             flow_controller,
             error_policy=policy,
             prompt_handler=_stdin_prompt if policy is ErrorPolicy.PROMPT else None,
-            send_block_bytes=chunk_budget,
+            send_block_bytes=send_block_bytes,
             verify_mode=verify_mode,
         )
         executor.run(chunks, progress)
@@ -279,13 +270,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     monitor_parser = subparsers.add_parser(
         "monitor",
-        help="switch monitor mode (computer port) or watch the echo (terminal port)",
+        help="enable/disable monitor mode (computer port) or watch the echo (terminal port)",
     )
-    monitor_parser.add_argument("state", choices=["on", "off", "watch"], help="on/off toggle monitor mode on the computer port; watch streams each byte echoed on the terminal port")
-    monitor_parser.add_argument("--mode", type=int, choices=[0, 1], default=1, help="0=bytes as parsed, 1=bytes as received (default: 1)")
-    monitor_parser.add_argument("--seconds", type=float, default=None, help="watch duration in seconds (default: until interrupted)")
-    monitor_parser.add_argument("--enable", action="store_true", help="for watch: enable monitor mode on --command-port before reading")
-    monitor_parser.add_argument("--command-port", default=None, help="for watch --enable: the COMPUTER (data) port to send the monitor-on sequence to")
+    monitor_parser.add_argument("state", choices=["enable", "disable", "watch"], help="enable/disable monitor mode on the computer (data) port, or watch the byte echo on the terminal port")
+    monitor_parser.add_argument("--mode", choices=["received", "parsed"], default="received", help="for enable: which of the two monitor modes - 'received' = bytes echoed as received (ESC.@ mode 1), 'parsed' = as parsed from the buffer (ESC.@ mode 0). Default: received.")
+    monitor_parser.add_argument("--seconds", type=float, default=None, help="for watch: duration in seconds (default: until interrupted)")
     _add_serial_arguments(monitor_parser)
     monitor_parser.set_defaults(handler=_handle_monitor)
 

@@ -65,18 +65,23 @@ def set_configuration(parameter_one: int | None, parameter_two: int | None) -> b
 
 
 def monitor_mode(enabled: bool, display_received: bool = True) -> bytes:
-    """Build an ESC.@ that toggles monitor mode.
+    """Build an ESC.@ that enables or disables monitor mode.
 
-    The configuration-byte bit layout is per manual p.168 (bit2 = monitor mode
-    0/1, bit3 = monitor enable). We set only the monitor bits in the second
-    parameter and leave the handshake bit (bit0) untouched. Confirmed working on
-    the on-site 7475A (`monitor watch` echoes the byte stream).
+    The configuration byte (ESC.@ second parameter) is per manual p.168:
+    bit 3 = enable monitor mode; bit 2 = which of the two modes -
+        bit 2 = 0 -> "monitor mode 0": bytes displayed on the terminal as they
+                     are *parsed* from the buffer (HP-GL only);
+        bit 2 = 1 -> "monitor mode 1": bytes displayed as they are *received*
+                     (including device-control).
+    (Operator-facing HP docs 1-index these as Monitor 1 / Monitor 2.) We set only
+    the monitor bits and leave the handshake bit (bit 0) untouched. Confirmed on
+    the on-site 7475A. The manual's own example is ESC.@;13: (received).
     """
     if not enabled:
         return set_configuration(None, 0)
-    monitor_byte = 8  # bit3: enable monitor mode
+    monitor_byte = 8  # bit 3: enable monitor mode
     if display_received:
-        monitor_byte |= 4  # bit2: mode 1 (bytes shown as received vs. as parsed)
+        monitor_byte |= 4  # bit 2 = 1: display bytes as received (vs. as parsed)
     return set_configuration(None, monitor_byte)
 
 

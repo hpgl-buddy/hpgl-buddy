@@ -352,16 +352,20 @@ class Executor:
             span_to_verify: list[Chunk] | None = None
             if pending:
                 pending = False
-                if chunk.oversized:
-                    # An oversized chunk is streamed in several ESC.B-gated
-                    # sub-blocks; a prefixed verdict reply would interleave those
-                    # polls. Read the pending verdict standalone first (it blocks
-                    # until the previous chunk finished drawing).
-                    self.transport.write(tailgate_command())
+                tailgate = tailgate_command()
+                if len(tailgate) + chunk.byte_size > self.send_block_bytes:
+                    # The tailgate + chunk would not fit one ESC.B-gated send
+                    # block, so _send_raw would split it and poll ESC.B between
+                    # sub-blocks - and that poll collides with the prefixed
+                    # tailgate's own buffered reply (the ESC.B read eats the OS
+                    # token, desyncing the verdict). Read the pending verdict
+                    # standalone first instead (it blocks until the previous
+                    # chunk finished drawing), then stream the chunk on its own.
+                    self._send_raw(tailgate)
                     self._read_verdict(unverified, progress, final=False)
                     unverified = []
                 else:
-                    payload = tailgate_command() + chunk.raw_bytes
+                    payload = tailgate + chunk.raw_bytes
                     span_to_verify = unverified
 
             self._send_raw(payload)

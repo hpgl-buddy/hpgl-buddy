@@ -96,6 +96,7 @@ def _make_executor(
     policy: ErrorPolicy,
     verify_mode: VerifyMode = VerifyMode.OFF,
     send_block_bytes: int = 256,
+    sync_timeout_seconds: float = 90.0,
 ) -> Executor:
     flow = FlowController(device, buffer_size_bytes=1024, poll_interval_seconds=0)
     return Executor(
@@ -104,6 +105,7 @@ def _make_executor(
         error_policy=policy,
         verify_mode=verify_mode,
         send_block_bytes=send_block_bytes,
+        sync_timeout_seconds=sync_timeout_seconds,
     )
 
 
@@ -267,6 +269,43 @@ class _SlowTailgateTransport(Transport):
         return chunk
 
 
+def test_tailgate_reads_terminator_wise_not_a_fixed_block():
+    # Regression (slow plots): the tailgate must read up to each CR - returning as
+    # soon as the reply arrives - not request a fixed 64-byte block. A block read
+    # makes the serial layer wait out the whole read timeout for bytes that never
+    # come (only ~11 of 64 arrive), adding ~2 s of dead time at every checkpoint.
+    from hpgl_buddy.status.exchange import read_tailgate_response
+
+    class _RecordingTransport(Transport):
+        def __init__(self, payload: bytes) -> None:
+            self._payload = bytearray(payload)
+            self.max_bytes_requested: list[int] = []
+
+        def describe(self) -> str:
+            return "recording"
+
+        def _open(self) -> None: ...
+        def _close(self) -> None: ...
+
+        def _write(self, data: bytes) -> int:
+            return len(data)
+
+        def _read(self, max_bytes: int, timeout_seconds):
+            self.max_bytes_requested.append(max_bytes)
+            chunk = bytes(self._payload[:max_bytes])
+            del self._payload[:max_bytes]
+            return chunk
+
+    transport = _RecordingTransport(b"16\r0\r7475A\r")
+    result = read_tailgate_response(transport, timeout_seconds=5.0)
+
+    assert result.status_byte == 16
+    assert result.hpgl_error == 0
+    assert result.model_tag == "7475A"
+    # Never asked for a large fixed block (which would stall on the short reply).
+    assert max(transport.max_bytes_requested) == 1
+
+
 def test_read_tailgate_aligns_despite_slow_first_response():
     # The real OS/OE/OI arrive only after two empty (timed-out) reads; they must
     # still land in the right slots (this was the pen-not-parked regression).
@@ -341,6 +380,101 @@ def test_verify_mode_reads_standalone_verdict_before_oversized_chunk():
     progress = _make_executor(
         device, ErrorPolicy.ABORT, VerifyMode.CHUNK, send_block_bytes=256
     ).run(chunks, ProgressState())
+    assert b"".join(device.data_writes) == b"".join(i.raw_bytes for i in program)
+    assert progress.chunks_sent == len(chunks)
+
+
+class _RacyVerifyDevice(_FakeDevice):
+    """Models the on-wire race behind the field hang: once a tailgate (OS;OE;OI;)
+    is written, its reply sits buffered in the plotter's output. An ESC.B poll
+    issued *before* that reply is read therefore collides with it (on real
+    hardware the ESC.B read grabs the OS token, desyncing the verdict). Here the
+    buffered verdict is kept aside so the run still completes, but every such
+    collision is counted - it must never happen.
+    """
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._buffered_verdict = bytearray()
+        self.collisions = 0
+
+    def _write(self, data: bytes) -> int:
+        tailgate = tailgate_command()
+        if data == escape.output_buffer_space():
+            if self._buffered_verdict:
+                self.collisions += 1  # ESC.B poll racing a buffered tailgate reply
+            self._response = bytearray(f"{self.free_space}\r".encode())
+            return len(data)
+        if data == tailgate or data.startswith(tailgate):
+            self.tailgate_count += 1
+            error_value = self.hpgl_error_queue.pop(0) if self.hpgl_error_queue else 0
+            self._buffered_verdict = bytearray(f"16\r{error_value}\r7475A\r".encode())
+            remainder = data[len(tailgate):]
+            if remainder:
+                self.data_writes.append(remainder)
+            self._response = bytearray()
+            return len(data)
+        return super()._write(data)
+
+    def _read(self, max_bytes: int, timeout_seconds):
+        if not self._response and self._buffered_verdict:
+            self._response = self._buffered_verdict
+            self._buffered_verdict = bytearray()
+        return super()._read(max_bytes, timeout_seconds)
+
+
+def test_verify_chunk_does_not_poll_escb_against_a_buffered_tailgate():
+    # Regression (field hang): in verify mode a near-budget pen-up chunk gets the
+    # OS;OE;OI; tailgate prefixed. If chunk+prefix overflows a send block, the
+    # payload is split and the ESC.B poll between sub-blocks races the tailgate's
+    # buffered reply - eating the OS token, so the verdict read hangs on the
+    # missing 3rd token. Sizing send blocks to hold chunk+prefix keeps it one
+    # write, so no ESC.B ever lands mid-tailgate.
+    budget = 256
+    body = ";".join(f"PU{i},{i * 2}" for i in range(64))
+    program = parse_hpgl(f"SP1;{body};".encode())
+    chunks = plan_chunks(program, max_chunk_bytes=budget)
+    assert any(
+        not chunk.oversized
+        and len(tailgate_command()) + chunk.byte_size > budget
+        for chunk in chunks
+    ), "test needs a chunk that overflows a 256-byte block once prefixed"
+
+    device = _RacyVerifyDevice()
+    progress = _make_executor(
+        device,
+        ErrorPolicy.ABORT,
+        VerifyMode.CHUNK,
+        send_block_bytes=budget + 64,
+        sync_timeout_seconds=2.0,
+    ).run(chunks, ProgressState())
+
+    assert device.collisions == 0
+    assert len(device.data_writes) == len(chunks)  # one write per chunk, never split
+    assert b"".join(device.data_writes) == b"".join(i.raw_bytes for i in program)
+    assert progress.chunks_sent == len(chunks)
+
+
+def test_verify_chunk_reads_verdict_standalone_when_prefix_would_overflow():
+    # Defense in depth: even when send blocks are too small to hold chunk+prefix,
+    # the executor reads the verdict standalone (bare tailgate) rather than
+    # splitting a prefixed payload - so an ESC.B poll never races a buffered
+    # tailgate. A tight send_block_bytes forces this path.
+    budget = 256
+    body = ";".join(f"PU{i},{i * 2}" for i in range(64))
+    program = parse_hpgl(f"SP1;{body};".encode())
+    chunks = plan_chunks(program, max_chunk_bytes=budget)
+
+    device = _RacyVerifyDevice()
+    progress = _make_executor(
+        device,
+        ErrorPolicy.ABORT,
+        VerifyMode.CHUNK,
+        send_block_bytes=budget,
+        sync_timeout_seconds=2.0,
+    ).run(chunks, ProgressState())
+
+    assert device.collisions == 0
     assert b"".join(device.data_writes) == b"".join(i.raw_bytes for i in program)
     assert progress.chunks_sent == len(chunks)
 

@@ -74,11 +74,22 @@ class FlowController:
             free = self.read_free_space()
             now = time.monotonic()
             if free != previous_free:
-                logger.info("Buffer free: %d / %d bytes", free, self.buffer_size_bytes)
+                logger.info(
+                    "Plotter drawing; buffer %d / %d bytes free",
+                    free,
+                    self.buffer_size_bytes,
+                )
                 previous_free = free
                 last_log = now
             elif now - last_log >= heartbeat_seconds:
-                logger.info("Draining buffer (%d / %d free)...", free, self.buffer_size_bytes)
+                # Free count hasn't moved: the plotter is busy on a slow op (a
+                # long stroke or a pen change) and has not consumed more buffer.
+                logger.info(
+                    "Waiting for the plotter to finish; buffer %d / %d free, "
+                    "unchanged (long stroke or pen change)",
+                    free,
+                    self.buffer_size_bytes,
+                )
                 last_log = now
 
             if self.read_extended_status() & 8:  # ESC.O bit 3 = buffer empty
