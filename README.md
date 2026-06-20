@@ -172,15 +172,21 @@ can be added as another `Transport` without touching the rest.
 ## Development
 
 ```bash
-pip install -e ".[dev]"   # editable install with test dependencies
-tox                       # run the test suite (Python 3.13)
-tox -e build              # build the sdist + wheel
+pip install -e . -r requirements-dev.txt   # editable install + pinned dev tooling
+tox                                         # run the test suite (Python 3.13)
+tox -e build                                # build the sdist + wheel
 ```
 
-Dependencies are managed two-file style: `requirements-rough.txt` (hand-maintained,
-loose top-level) is frozen into a fully-pinned `requirements.txt` by the
-`dependencies_update` GitHub Actions workflow. A `Dockerfile` provides a reproducible
-build/test image (not for serial I/O - hardware is not reachable from a container).
+Dependencies follow a loose-*rough* -> pinned pattern, frozen in clean environments by the
+`dependencies_update` GitHub Actions workflow:
+
+- **runtime:** `requirements-rough.txt` (hand-maintained, loose; kept in sync with
+  `[project.dependencies]`) -> **`requirements.txt`** (fully pinned).
+- **dev / CI tooling:** `requirements-dev-rough.txt` (loose: pytest, tox, build, twine) ->
+  **`requirements-dev.txt`** (fully pinned), needed only in CI and dev environments.
+
+A `Dockerfile` provides a reproducible build/test image (not for serial I/O - hardware is
+not reachable from a container).
 
 Conventions: extensive logging (no `print`), ASCII-only output, descriptive names, and
 errors that state what happened, where, and why.

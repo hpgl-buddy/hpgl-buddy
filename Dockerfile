@@ -18,9 +18,10 @@ WORKDIR /app
 
 RUN python -m pip install --upgrade pip
 
-# Install the pinned environment first for a reproducible, well-cached layer.
-COPY requirements.txt ./
-RUN pip install -r requirements.txt
+# Install the pinned runtime + dev (test/build) tooling first, for a
+# reproducible, well-cached layer.
+COPY requirements.txt requirements-dev.txt ./
+RUN pip install -r requirements.txt -r requirements-dev.txt
 
 # Then the package itself, without re-resolving deps (they are pinned above).
 COPY . .

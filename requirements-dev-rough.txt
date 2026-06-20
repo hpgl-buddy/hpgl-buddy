@@ -1,0 +1,11 @@
+# Rough, hand-maintained dev / CI tooling (tests, wheel build, release checks).
+# These are NOT needed to run the library - only in CI and dev environments.
+#
+# Pinned versions live in requirements-dev.txt, generated from THIS file by the
+# "dependencies_update" GitHub Actions workflow (same flow as
+# requirements-rough.txt -> requirements.txt for the runtime side).
+
+pytest>=8
+tox>=4
+build>=1.2
+twine>=5

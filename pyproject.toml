@@ -24,12 +24,12 @@ classifiers = [
     "Topic :: System :: Hardware :: Hardware Drivers",
 ]
 
-# pyserial is the sole runtime dependency. TOML profiles are read with the
-# standard-library tomllib (Python 3.11+), so no extra parser is needed.
-dependencies = ["pyserial>=3.5"]
+# pyserial is the sole runtime dependency (kept in sync with requirements-rough.txt).
+# TOML profiles are read with the standard-library tomllib, so no extra parser is needed.
+dependencies = ["pyserial>=3.5,<4.0"]
 
-[project.optional-dependencies]
-dev = ["pytest>=8"]
+# Dev/CI tooling is not a package extra; it lives in requirements-dev-rough.txt
+# (loose) -> requirements-dev.txt (pinned). See the README "Development" section.
 
 [project.urls]
 Homepage = "https://github.com/hpgl-buddy/hpgl-buddy"

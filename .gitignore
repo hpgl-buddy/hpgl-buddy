@@ -6,5 +6,5 @@ __pycache__/
 *.pyc
 .tox/
 .pytest_cache/
-requirements.generated.txt
-requirements.diff
+requirements*.generated
+requirements*.diff
