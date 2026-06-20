@@ -1,0 +1,117 @@
+name: Bug report
+description: Something went wrong while checking, planning, or plotting an HP-GL file.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. hpgl-buddy logs every wire
+        exchange at `-v` (DEBUG), so a verbose log usually tells the whole story -
+        please include one. Redact nothing automatically; the log is plain ASCII.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect to happen, and what happened instead?
+      placeholder: |
+        Expected: the plot to finish and the pen to park.
+        Actual: it hung after chunk #6 waiting for a tailgate response.
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Command you ran
+      description: The full hpgl-buddy command line (you can redact the file name).
+      render: shell
+      placeholder: hpgl-buddy -v plot drawing.hpgl --port /dev/cu.usbserial-XXXX --live-hpgl-verify chunk
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Verbose log
+      description: >
+        Re-run with `-v` and paste the relevant portion (the lines around the
+        failure, plus a bit of context). This is the single most useful thing.
+      render: text
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: hpgl-buddy version
+      description: Output of `hpgl-buddy -V`.
+      placeholder: hpgl-buddy 1.2.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-source
+    attributes:
+      label: How did you install it?
+      options:
+        - PyPI (pip install hpgl-buddy)
+        - From source (editable / git checkout)
+        - Other (describe below)
+    validations:
+      required: true
+
+  - type: input
+    id: plotter
+    attributes:
+      label: Plotter model
+      placeholder: HP 7475A
+    validations:
+      required: true
+
+  - type: input
+    id: adapter
+    attributes:
+      label: USB-serial adapter
+      description: Chipset and/or USB VID:PID if you know it (`system_profiler`/`lsusb`). Adapter quirks are a common cause.
+      placeholder: FTDI FT232 / 0403:6001  (or "built-in RS-232")
+    validations:
+      required: false
+
+  - type: input
+    id: serial-settings
+    attributes:
+      label: Serial settings
+      description: Baud / framing / flow control, if you changed the defaults (9600 8N1, no flow control).
+      placeholder: 9600 8N1, --xonxoff
+    validations:
+      required: false
+
+  - type: input
+    id: environment
+    attributes:
+      label: OS and Python
+      placeholder: macOS 14.6 / Python 3.13.2
+    validations:
+      required: true
+
+  - type: textarea
+    id: hpgl
+    attributes:
+      label: HP-GL input (optional)
+      description: >
+        If a specific file triggers it, attach it or paste a minimal snippet that
+        reproduces. `hpgl-buddy check <file>` output helps too.
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: I included a `-v` verbose log (or explained why I can't).
+          required: true

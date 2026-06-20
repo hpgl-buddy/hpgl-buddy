@@ -1,0 +1,84 @@
+name: Device support request
+description: Ask for (or offer) support for another HP-GL pen plotter.
+labels: ["device-support"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Most devices are added as a declarative TOML profile in
+        `src/hpgl_buddy/devices/profiles/` - no code needed unless the device has
+        unusual behavior. The more of the fields below you can fill in (ideally
+        from the device's interfacing manual), the faster a profile can land.
+
+  - type: input
+    id: model
+    attributes:
+      label: Plotter model
+      placeholder: HP 7550A
+    validations:
+      required: true
+
+  - type: dropdown
+    id: interface
+    attributes:
+      label: Interface
+      options:
+        - RS-232 (serial)
+        - HP-IB / GPIB
+        - Both
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: buffer
+    attributes:
+      label: I/O buffer size (bytes)
+      description: From the manual, or the `ESC.L` response.
+      placeholder: "1024"
+    validations:
+      required: false
+
+  - type: input
+    id: pens
+    attributes:
+      label: Number of pens
+      placeholder: "8"
+    validations:
+      required: false
+
+  - type: input
+    id: clip
+    attributes:
+      label: Hard-clip limits
+      description: The `OH` response (P1/P2 hard limits), if known.
+      placeholder: "0,0,11040,7721"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: pen-sensing
+    attributes:
+      label: Does it sense pen presence?
+      options:
+        - "No (like the 7475A)"
+        - "Yes"
+        - "Not sure"
+    validations:
+      required: false
+
+  - type: textarea
+    id: manual
+    attributes:
+      label: Manual / references
+      description: Link to or note the interfacing manual, status-byte tables, ESC command set, etc.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: hardware
+    attributes:
+      label: Testing
+      options:
+        - label: I have this device and can test a candidate profile on real hardware.
+          required: false

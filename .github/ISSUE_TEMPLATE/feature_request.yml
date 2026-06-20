@@ -1,0 +1,38 @@
+name: Feature request
+description: Suggest a capability or improvement (not a new device - use the device template for that).
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the use case or the friction you hit. Focus on the "why" before the "how".
+      placeholder: When plotting a long unattended run I'd like to be notified if the pen stalls.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would you like hpgl-buddy to do? A CLI flag, a new subcommand, a behavior change?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you've tried, or other designs you weighed.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - label: I've read DESIGN.md and this fits the tool's "safe, observable plotting" goal.
+          required: false
+        - label: I'd be willing to help implement or test this.
+          required: false
