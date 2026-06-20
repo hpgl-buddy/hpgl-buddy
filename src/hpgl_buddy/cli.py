@@ -255,7 +255,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="hpgl-buddy",
         description="Carefree, observable plotting of HP-GL files on HP pen plotters.",
     )
-    parser.add_argument("--version", action="version", version=f"hpgl-buddy {__version__}")
+    parser.add_argument("-V", "--version", action="version", version=f"hpgl-buddy {__version__}")
     parser.add_argument("-v", "--verbose", action="store_true", help="enable DEBUG logging incl. raw wire bytes")
 
     subparsers = parser.add_subparsers(dest="command", required=True)

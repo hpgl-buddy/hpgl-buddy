@@ -13,7 +13,9 @@ run can be understood and troubleshooted from the log alone.
 
 **Supported devices:** 
 
-* HP 7475A (RS-232). New devices are added as declarative profiles
+* HP 7475A (RS-232)
+
+New devices are added as declarative profiles
 (see [Extending](#extending)); HP-IB is planned.
 
 ---
@@ -33,25 +35,23 @@ Requires Python 3.13 and a USB-serial adapter (on macOS use the `/dev/cu.*` devi
 ## Quick start
 
 ```bash
-# 1. Validate a file offline (no plotter needed)
-hpgl-buddy check drawing.hpgl
+# 1. Generate a built-in demo to a file (no plotter needed)
+hpgl-buddy demo --pens 6 --out demo.hpgl
 
-# 2. Check the plotter is alive and interpret its status
+# 2. Validate it offline (no plotter needed)
+hpgl-buddy check demo.hpgl
+
+# 3. Check the plotter is alive and interpret its status
 hpgl-buddy status --port /dev/cu.usbserial-XXXX
 
-# 3. Plot it (verbose shows every byte/ESC exchange)
-hpgl-buddy -v plot drawing.hpgl --port /dev/cu.usbserial-XXXX
-
-# 4. Generate and plot a built-in demo
-hpgl-buddy demo --pens 6 --out demo.hpgl
-hpgl-buddy plot demo.hpgl --port /dev/cu.usbserial-XXXX
+# 4. Plot it (verbose shows every byte/ESC exchange)
+hpgl-buddy -v plot demo.hpgl --port /dev/cu.usbserial-XXXX
 ```
 
 Sample HP-GL files live in [`examples/`](https://github.com/hpgl-buddy/hpgl-buddy/tree/master/examples).
 
 Serial defaults: **9600 8N1, no flow control** (configurable). Flow control is off by
-default because XON/XOFF corrupted the exchange on the on-site adapter; enable it with
-`--xonxoff` if your cabling needs it.
+default; enable it with `--xonxoff` if your cabling needs it.
 
 ---
 
@@ -59,13 +59,13 @@ default because XON/XOFF corrupted the exchange on the on-site adapter; enable i
 
 | Command | What it does |
 |---|---|
-| `check FILE` | Offline HP-GL syntax check. No device. Exit non-zero on errors. |
 | `status` | Ad-hoc healthcheck: identification, buffer, status byte, errors, limits - all interpreted. |
+| `check FILE` | Offline HP-GL syntax check. No device. Exit non-zero on errors. |
 | `plot FILE` | Safe, buffer-aware plotting with progress + end-of-run report. |
 | `monitor enable\|disable\|watch` | Enable/disable monitor mode (computer port) or stream the echoed bytes (terminal port). |
 | `demo` | Generate demo HP-GL: `--scene card` (shapes/fills/labels/colours grid) or `--scene house` (a one-line drawing emitted as a single giant `PD` instruction - the >1024-byte oversized-instruction case, streamed in sub-blocks). |
 
-Global: `-v/--verbose` (DEBUG, incl. raw ASCII+hex wire dumps), `--version`.
+Global: `-v/--verbose` (DEBUG, incl. raw ASCII+hex wire dumps), `-V/--version`.
 
 Serial options (on `status`/`plot`/`monitor`): `--port`, `--model` (default `hp7475a`),
 `--baud`, `--framing` (e.g. `8N1`), `--timeout`, `--xonxoff`, `--rtscts`.
@@ -92,8 +92,8 @@ hpgl-buddy monitor watch   --port /dev/cu.TERMINAL   # stream the echo (terminal
 hpgl-buddy monitor disable --port /dev/cu.COMPUTER   # turn it off when done
 ```
 
-There are two monitor modes (`enable --mode received|parsed`): **`received`** (default)
-echoes every byte as it arrives, including ESC device-control sequences; **`parsed`**
+There are two monitor modes (`enable --mode received|parsed`): **`received`** (default, mode 1 in the documentstion)
+echoes every byte as it arrives, including ESC device-control sequences; **`parsed`** (mode 0 in the documentation)
 echoes only HP-GL as the plotter parses it from the buffer. `watch` prints every byte as
 binary, hex, decimal, and ASCII/control-name.
 
@@ -195,3 +195,10 @@ not reachable from a container).
 
 Conventions: extensive logging (no `print`), ASCII-only output, descriptive names, and
 errors that state what happened, where, and why.
+
+## Vibe-code disclosure
+
+This library is written heavily with Claude. The design is decided upon by the initial human-author. All hands-on tests are conducted by a human-operator.
+
+The human-conducted code review (HCCR) is an optimisation of a sort. It will be done in the right time.
+
