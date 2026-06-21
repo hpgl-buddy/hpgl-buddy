@@ -1,6 +1,7 @@
 name: Device support request
 description: Ask for (or offer) support for another HP-GL pen plotter.
 labels: ["device-support"]
+title: "[DeviceSupport] "
 body:
   - type: markdown
     attributes:

@@ -8,6 +8,7 @@ error policy) while a ProgressState records what happened for the run report.
 from .planner import Chunk, plan_chunks
 from .progress import ProgressState
 from .executor import ErrorPolicy, Executor, VerifyMode
+from .run import plot_program
 
 __all__ = [
     "Chunk",
@@ -16,4 +17,5 @@ __all__ = [
     "ErrorPolicy",
     "Executor",
     "VerifyMode",
+    "plot_program",
 ]

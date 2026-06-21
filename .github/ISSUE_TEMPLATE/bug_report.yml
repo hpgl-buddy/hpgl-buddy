@@ -1,6 +1,7 @@
 name: Bug report
 description: Something went wrong while checking, planning, or plotting an HP-GL file.
 labels: ["bug"]
+title: "[Bug] "
 body:
   - type: markdown
     attributes:

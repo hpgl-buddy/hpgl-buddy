@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from hpgl_buddy.demo import generate_demo
+from hpgl_buddy.devices import get_device
 from hpgl_buddy.execution import (
     ErrorPolicy,
     Executor,
     ProgressState,
     VerifyMode,
     plan_chunks,
+    plot_program,
 )
 from hpgl_buddy.execution.flow_control import FlowController
 from hpgl_buddy.hpgl import check_program, parse_hpgl
@@ -397,6 +399,7 @@ class _RacyVerifyDevice(_FakeDevice):
         super().__init__(**kwargs)
         self._buffered_verdict = bytearray()
         self.collisions = 0
+        self.bare_tailgates = 0  # standalone (non-prefixed) tailgate writes
 
     def _write(self, data: bytes) -> int:
         tailgate = tailgate_command()
@@ -407,6 +410,8 @@ class _RacyVerifyDevice(_FakeDevice):
             return len(data)
         if data == tailgate or data.startswith(tailgate):
             self.tailgate_count += 1
+            if data == tailgate:
+                self.bare_tailgates += 1  # standalone verdict read or final confirm
             error_value = self.hpgl_error_queue.pop(0) if self.hpgl_error_queue else 0
             self._buffered_verdict = bytearray(f"16\r{error_value}\r7475A\r".encode())
             remainder = data[len(tailgate):]
@@ -477,6 +482,60 @@ def test_verify_chunk_reads_verdict_standalone_when_prefix_would_overflow():
     assert device.collisions == 0
     assert b"".join(device.data_writes) == b"".join(i.raw_bytes for i in program)
     assert progress.chunks_sent == len(chunks)
+
+
+def test_plot_program_streams_full_program_and_returns_progress():
+    # The reusable orchestration plans + streams an already-parsed program over an
+    # open transport and reports through the ProgressState it was handed back.
+    device = get_device("hp7475a")
+    transport = _FakeDevice()
+    program = parse_hpgl(b"IN;SP1;PA0,0;PU;PA100,100;PD200,200;PU;")
+    progress = ProgressState()
+
+    with transport:
+        returned = plot_program(transport, program, device, progress=progress)
+
+    assert returned is progress  # caller can poll the very instance it passed in
+    assert progress.chunks_total > 0
+    assert progress.chunks_sent == progress.chunks_total
+    assert progress.instructions_sent == progress.instructions_total
+    # Every program byte reached the device, nothing reordered or dropped.
+    assert b"".join(transport.data_writes) == b"".join(i.raw_bytes for i in program)
+
+
+def test_plot_program_sizes_send_blocks_to_keep_verify_on_the_no_stall_path():
+    # Regression guard for issue #9. plot_program must size send blocks to hold a
+    # pen-up chunk plus the prefixed OS;OE;OI; tailgate. When it does, every
+    # mid-run verdict rides prefixed on the next chunk and the only bare tailgate
+    # is the final completion confirm. If the sizing were re-derived too small
+    # (e.g. left at the 256-byte default), the executor would fall back to
+    # standalone verdict reads that stall the pen - exactly the one-deep behavior
+    # the field-hang fix restored. Counting bare tailgates pins that down (the
+    # original on-wire collision is separately prevented by the executor guard,
+    # so collisions==0 alone would not catch a sizing regression).
+    device = get_device("hp7475a")  # 1024-byte buffer -> chunk budget 256
+    body = ";".join(f"PU{i},{i * 2}" for i in range(64))
+    program = parse_hpgl(f"SP1;{body};".encode())
+    # Sanity: there is a chunk that would overflow a 256-byte block once the
+    # tailgate is prefixed - so undersized blocks really would force a standalone
+    # read, and a pass here proves correct sizing avoided it.
+    chunks = plan_chunks(program, max_chunk_bytes=256)
+    assert any(
+        not chunk.oversized
+        and len(tailgate_command()) + chunk.byte_size > 256
+        for chunk in chunks
+    ), "test needs a chunk that overflows a 256-byte block once prefixed"
+
+    transport = _RacyVerifyDevice()
+    with transport:
+        progress = plot_program(
+            transport, program, device, verify_mode=VerifyMode.CHUNK
+        )
+
+    assert transport.bare_tailgates == 1  # only the trailing completion confirm
+    assert transport.collisions == 0
+    assert progress.chunks_sent == progress.chunks_total
+    assert b"".join(transport.data_writes) == b"".join(i.raw_bytes for i in program)
 
 
 def test_progress_to_dict_is_json_serializable():

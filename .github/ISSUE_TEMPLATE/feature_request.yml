@@ -1,6 +1,7 @@
 name: Feature request
 description: Suggest a capability or improvement (not a new device - use the device template for that).
 labels: ["enhancement"]
+title: "[Feature] "
 body:
   - type: textarea
     id: problem

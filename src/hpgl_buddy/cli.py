@@ -22,9 +22,7 @@ from pathlib import Path
 from . import __version__
 from .devices import get_device
 from .errors import HpglBuddyError
-from .execution import ErrorPolicy, Executor, ProgressState, VerifyMode, plan_chunks
-from .execution.flow_control import FlowController
-from .execution.planner import DEFAULT_MAX_CHUNK_BYTES
+from .execution import ErrorPolicy, ProgressState, VerifyMode, plot_program
 from .demo import generate_demo, generate_scene
 from .hpgl import check_program, parse_hpgl
 from .interface import SerialTransport
@@ -174,41 +172,26 @@ def _handle_plot(args: argparse.Namespace) -> int:
         return EXIT_FINDINGS
 
     device = get_device(args.model)
-    if not device.profile.pen_sensing:
-        logger.info(
-            "Note: %s has no pen sensing - load the pens this file uses before plotting "
-            "(a missing pen plots dry and is not detectable).",
-            device.model,
-        )
     verify_mode = VerifyMode(args.live_hpgl_verify)
-    chunk_budget = min(DEFAULT_MAX_CHUNK_BYTES, max(64, device.buffer_bytes - 128))
-    # A verify-mode tailgate (OS;OE;OI;) is prefixed to a chunk; that prefixed
-    # payload must go out in one ESC.B-gated send block, or the poll between
-    # sub-blocks collides with the tailgate's buffered reply. Size send blocks
-    # to hold a full chunk plus the prefix (capped at the device buffer).
-    send_block_bytes = min(device.buffer_bytes, chunk_budget + 64)
-    chunks = plan_chunks(
-        program,
-        max_chunk_bytes=chunk_budget,
-        break_on_pen_up=(verify_mode is VerifyMode.PU),
-    )
-
-    transport = _build_transport(args)
     policy = ErrorPolicy(args.on_error)
+
+    # The plot orchestration (chunk sizing, planning, flow control + executor
+    # wiring) lives in execution.plot_program so the CLI and external callers
+    # share one tested path. The CLI owns file I/O, the syntax gate above, the
+    # transport lifecycle, and the run report below.
+    transport = _build_transport(args)
     progress = ProgressState()
     with transport:
-        flow_controller = FlowController(
-            transport, buffer_size_bytes=device.buffer_bytes, query_timeout_seconds=args.timeout
-        )
-        executor = Executor(
+        plot_program(
             transport,
-            flow_controller,
+            program,
+            device,
+            verify_mode=verify_mode,
             error_policy=policy,
             prompt_handler=_stdin_prompt if policy is ErrorPolicy.PROMPT else None,
-            send_block_bytes=send_block_bytes,
-            verify_mode=verify_mode,
+            query_timeout_seconds=args.timeout,
+            progress=progress,
         )
-        executor.run(chunks, progress)
 
     for line in progress.render().splitlines():
         logger.info("%s", line)
