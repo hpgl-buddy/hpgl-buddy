@@ -28,7 +28,7 @@ New devices are added as declarative profiles
 pip install hpgl-buddy
 ```
 
-Requires Python 3.13 and a USB-serial adapter (on macOS use the `/dev/cu.*` device).
+Requires Python 3.11+ and a USB-serial adapter (on macOS use the `/dev/cu.*` device).
 `pyserial` is the only runtime dependency. To work on hpgl-buddy itself, see
 [Development](#development).
 
@@ -182,8 +182,15 @@ can be added as another `Transport` without touching the rest.
 
 ```bash
 pip install -e . -r requirements-dev.txt   # editable install + pinned dev tooling
-tox                                         # run the test suite (Python 3.13)
+tox                                         # run the test suite (your local Python)
 tox -e build                                # build the sdist + wheel
+```
+
+To run the suite across every supported Python (3.11-3.13) without installing those
+interpreters yourself, use the per-version container matrix:
+
+```bash
+docker compose -f docker-compose.test.yml up --abort-on-container-exit
 ```
 
 Dependencies follow a loose-*rough* -> pinned pattern, frozen in clean environments by the

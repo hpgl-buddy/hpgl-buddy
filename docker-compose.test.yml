@@ -1,0 +1,47 @@
+# Cross-version test matrix for hpgl-buddy.
+#
+# Runs the suite on every supported Python in its own official image, so a green
+# result proves the code works on that exact interpreter - independent of what is
+# installed on the host. (This is software-only verification; a container cannot
+# reach the serial port, so plotting on real hardware still runs on the host.)
+#
+#   docker compose -f docker-compose.test.yml up --abort-on-container-exit
+#   docker compose -f docker-compose.test.yml run --rm py311     # just one version
+#
+# Each container's own python IS the version under test, so there is no
+# interpreter discovery that could silently skip a version, and
+# "--skip-missing-interpreters false" makes a missing interpreter FAIL rather
+# than skip - the matrix can never report a false green.
+#
+# The source is mounted read-only at /src and copied to a private, writable /build
+# per container (so the sdist build can write, the three runs never race, and the
+# host tree is never touched). The "/src/*" glob skips dot-dirs (.venv/.git/.tox),
+# so the copy is cheap.
+
+x-test: &test
+  volumes:
+    - .:/src:ro
+  command: >
+    sh -c "mkdir -p /build && cp -a /src/* /build/ && cd /build &&
+           python --version &&
+           pip install --quiet --disable-pip-version-check tox &&
+           tox -e $$TOX_ENV --skip-missing-interpreters false"
+
+services:
+  py311:
+    <<: *test
+    image: python:3.11-slim
+    environment:
+      TOX_ENV: py311
+
+  py312:
+    <<: *test
+    image: python:3.12-slim
+    environment:
+      TOX_ENV: py312
+
+  py313:
+    <<: *test
+    image: python:3.13-slim
+    environment:
+      TOX_ENV: py313

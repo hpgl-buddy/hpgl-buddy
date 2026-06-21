@@ -18,7 +18,7 @@ Programming Manual** (`hp/FFONS49JUMXQZJH`, 230 pp) and the **HP 7475A Short For
 | Flow control     | `ESC.B` software polling as primary, XON/XOFF enabled as safety net   |
 | Device profiles  | Declarative TOML data files + an abstract `Device` base class         |
 | Default baud     | 9600 (configurable; matches on-site 7475A DIP setting)                |
-| Python           | 3.13                                                                   |
+| Python           | 3.11+ (floor set by stdlib tomllib; tested on 3.11-3.13)               |
 | Interface        | RS-232 only (HP-IB deferred)                                          |
 | Output           | ASCII only, no emoji. Logging only, no `print`.                       |
 | Delivery         | Wheel (PyPI upload deferred)                                          |

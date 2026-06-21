@@ -10,7 +10,7 @@ The authoritative design, with HP manual citations, lives in
 
 ## Getting set up
 
-Requires Python 3.13.
+Requires Python 3.11 or newer.
 
 ```bash
 git clone https://github.com/hpgl-buddy/hpgl-buddy
@@ -22,10 +22,17 @@ pip install -e . -r requirements-dev.txt   # editable install + pinned dev tooli
 ## Day-to-day
 
 ```bash
-tox                 # the canonical check: tests on Python 3.13
+tox                 # the canonical check: tests on your local Python
 pytest -q           # tests directly (faster loop)
 pyflakes src tests  # must be clean
 tox -e build        # build the sdist + wheel
+```
+
+To exercise every supported Python (3.11-3.13) without installing each interpreter,
+run the per-version container matrix:
+
+```bash
+docker compose -f docker-compose.test.yml up --abort-on-container-exit
 ```
 
 No hardware is needed for most work: the offline checks, the execution pipeline, and
