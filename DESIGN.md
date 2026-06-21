@@ -251,7 +251,10 @@ an `ESC.B` drain threshold.
   loudly if a command we cannot model preceded the failure.)
 - **Progress + report:** ProgressState yields instructions sent / remaining, chunk
   count, elapsed time, ESC exchange log, recovered errors, warnings, and a `cancelled`
-  flag - emitted as the end-of-run report (README "Report" section).
+  flag - emitted as the end-of-run report (README "Report" section). It is mutated in
+  place (poll it), and `run`/`plot_program` also accept an optional `progress_callback`
+  pushed after each chunk and at the terminal state - an observer whose exceptions are
+  swallowed so it can never disrupt the run.
 - **Cooperative cancellation.** `Executor.run` / `plot_program` accept an optional
   `threading.Event`; when set from another thread (e.g. a GUI Stop button) the run halts
   at the next chunk boundary or during the drain wait, issues `ESC.K` + `PU` (discard

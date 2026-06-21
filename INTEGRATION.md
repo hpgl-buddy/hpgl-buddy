@@ -4,9 +4,10 @@ This guide is for embedding hpgl-buddy as a **library** (e.g. a PyQt GUI), not t
 CLI. It covers the public API, the current constraints you must design around, and
 copy-paste Python examples for every supported operation.
 
-> Status: the library is usable today, but some integration ergonomics are still
-> being added (see [Known conditions](#known-conditions--caveats)). This document
-> tracks what is true *now*.
+> Status: the library covers the full planned GUI scope (device list, status, check,
+> demo, plot - with cancellation and live progress). The
+> [Known conditions](#known-conditions--caveats) below are deliberate design
+> constraints, not missing features. This document tracks what is true *now*.
 
 ## Public API at a glance
 
@@ -31,8 +32,8 @@ is in that import. Monitor modes are intentionally out of scope.
 
 ## Known conditions & caveats
 
-Design the UI around these. Items marked *(roadmap)* are being addressed but are
-**not** available yet.
+Design the UI around these - they are intentional constraints of a local,
+serial-port, single-device tool.
 
 1. **Serial ports are not enumerated for you.** The library only *consumes* a port
    string. Discover ports in the UI, per platform, with pyserial:
@@ -49,9 +50,12 @@ Design the UI around these. Items marked *(roadmap)* are being addressed but are
    in-flight chunk, ~256 bytes.)
 3. **All calls block.** Run anything that touches the port (status, plot) on a
    worker thread; never on the UI thread.
-4. **Progress is poll-based.** *(push callback is roadmap.)* Pass your own
-   `ProgressState` into `plot_program` and poll it from the UI thread (e.g. a
-   `QTimer`) while the worker runs. The same instance is mutated in place.
+4. **Progress: poll or push.** Pass your own `ProgressState` into `plot_program` and
+   either poll it from the UI thread (e.g. a `QTimer`) - the same instance is mutated
+   in place - or pass a `progress_callback` to be called after each chunk and at the
+   end. The callback runs on the **worker thread**, so marshal to the UI (e.g. emit a
+   Qt signal); it is an observer only, and any exception it raises is logged and
+   swallowed rather than disrupting the plot.
 5. **One operation per port at a time.** A `SerialTransport` is single-owner; do not
    issue concurrent operations on the same open port from multiple threads.
 6. **You must validate before plotting.** `plot_program` plots the program as-is.
@@ -193,6 +197,9 @@ def run_plot(port, path, on_done):
 #           f"{progress.bytes_sent} bytes, {progress.elapsed_seconds:.0f}s"
 # When the run ends, progress.cancelled is True if it was stopped early, and
 # progress.to_dict() gives a JSON-ready run report.
+#
+# Push alternative to the timer: pass progress_callback=lambda p: emit_signal(p) to
+# plot_program. It fires after each chunk and at the end, on the worker thread.
 ```
 
 PyQt mapping: run `worker` in a `QThread` (or `QThreadPool`), drive the progress

@@ -28,10 +28,10 @@ pyflakes src tests  # must be clean
 tox -e build        # build the sdist + wheel
 ```
 
-No hardware is needed for most work: `check` (offline syntax check), the planner,
-flow control, the executor, and the demo generators are all covered by tests with
-a fake device. Please add or update tests for behavior changes - the executor and
-status layers especially reward a focused regression test.
+No hardware is needed for most work: the offline checks, the execution pipeline, and
+the demo generators are all exercised by tests against a fake device. Please add or
+update tests for behavior changes - the execution and status layers especially reward
+a focused regression test.
 
 ## House conventions
 
@@ -49,22 +49,19 @@ These are load-bearing, not style preferences:
 
 ## Adding a device
 
-Most plotters need only a declarative profile - drop a `<model>.toml` into
-`src/hpgl_buddy/devices/profiles/` (buffer size, pen count, serial defaults,
-capabilities such as `pen_sensing`). A device with unusual behavior can subclass
-`Device`. Please open a [device support issue](https://github.com/hpgl-buddy/hpgl-buddy/issues/new?template=device_support.yml)
+Most plotters need only a declarative TOML profile - buffer size, pen count, serial
+defaults, and capabilities such as `pen_sensing`; the bundled profiles and DESIGN.md
+show where these live and what they contain. A device with unusual behavior can
+subclass the device base instead. Please open a
+[device support issue](https://github.com/hpgl-buddy/hpgl-buddy/issues/new?template=device_support.yml)
 first so the field values can be confirmed against the manual, and test on real
 hardware if you have it.
 
 ## Dependencies
 
-Direct dependencies are hand-maintained as loose ranges and frozen to pinned files
-by CI - do not edit the pinned files by hand:
-
-- runtime: `requirements-rough.txt` (kept in sync with `[project.dependencies]`) -> `requirements.txt`
-- dev / CI: `requirements-dev-rough.txt` -> `requirements-dev.txt`
-
-Edit the `*-rough.txt` file; the `dependencies_update` workflow regenerates the pins.
+Direct dependencies are hand-maintained as loose version ranges and frozen into pinned
+lockfiles by CI - for both the runtime and the dev/CI toolchain. Edit only the loose
+`*-rough` files; a CI workflow regenerates the pinned ones, so never edit those by hand.
 
 ## Submitting changes
 
@@ -74,8 +71,8 @@ Edit the `*-rough.txt` file; the `dependencies_update` workflow regenerates the 
 3. Run `tox` and `pyflakes`; update docs (README / `--help` / DESIGN.md) if user-facing.
 4. Open a PR using the template. Reference any issue it closes.
 
-Releases are automated: pushing a bumped `src/hpgl_buddy/version.py` to `master` tags
-the version, builds artifacts, renders the changelog, and publishes to PyPI.
+Releases are automated: pushing a version bump to `master` tags the version, builds
+artifacts, renders the changelog, and publishes to PyPI.
 
 ## Code of conduct
 

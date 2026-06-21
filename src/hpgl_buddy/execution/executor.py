@@ -327,6 +327,7 @@ class Executor:
         progress: ProgressState,
         *,
         cancel: threading.Event | None = None,
+        progress_callback: Callable[[ProgressState], None] | None = None,
     ) -> ProgressState:
         """Stream chunks under flow control, the environmental watch, and the
         optional one-deep HP-GL verification.
@@ -344,9 +345,23 @@ class Executor:
         pen parked, ``progress.cancelled`` set, and the partial progress
         returned. The event is only ever read here; the caller (e.g. a GUI
         thread) sets it, so the transport stays single-owner.
+
+        ``progress_callback``, if given, is invoked with ``progress`` after each
+        processed chunk and once at the terminal state (completion or cancel) -
+        a push alternative to polling the mutated ``progress``. It is purely an
+        observer: any exception it raises is logged and swallowed so a faulty
+        callback never disrupts the run.
         """
         progress.chunks_total = len(chunks)
         progress.instructions_total = sum(len(chunk.instructions) for chunk in chunks)
+
+        def notify() -> None:
+            if progress_callback is None:
+                return
+            try:
+                progress_callback(progress)
+            except Exception:  # an observer must never disrupt a hardware run
+                logger.exception("progress_callback raised; continuing the plot")
 
         # Clear any stale error state before we begin.
         starting_io_error = self.flow.read_io_error()
@@ -365,6 +380,7 @@ class Executor:
         for chunk in chunks:
             if cancel is not None and cancel.is_set():
                 self._abort_for_cancel(progress)
+                notify()
                 return progress
             logger.info(
                 "Streaming chunk #%d: %d instruction(s), %d byte(s), pen_up=%s",
@@ -411,21 +427,26 @@ class Executor:
             if verifying and chunk.ends_at_pen_up:
                 pending = True
 
+            notify()  # push per-chunk progress to an observer (if any)
+
         # Wait for the buffer to drain (absorbs the remaining draw / pen-change
         # backlog), then the trailing tailgate only waits for the final pen
         # motion before confirming completion.
         if last_chunk is not None:
             if cancel is not None and cancel.is_set():
                 self._abort_for_cancel(progress)
+                notify()
                 return progress
             logger.info("All chunks sent; waiting for the plotter to finish")
             self.flow.wait_until_drained(self.drain_timeout_seconds, cancel=cancel)
             if cancel is not None and cancel.is_set():
                 self._abort_for_cancel(progress)
+                notify()
                 return progress
             self.transport.write(tailgate_command())
             self._read_verdict(unverified, progress, final=True)
 
         progress.finish()
+        notify()
         logger.info("Plot run complete")
         return progress

@@ -636,6 +636,75 @@ def test_plot_program_forwards_cancel():
     assert progress.chunks_sent == 0
 
 
+def test_run_progress_callback_fires_per_chunk_and_at_end():
+    program = parse_hpgl(b"SP1;PA0,0;PD10,10;PU;PA20,20;PD30,30;PU;PA40,40;PD50,50;PU;")
+    chunks = plan_chunks(program, max_chunk_bytes=16)
+    total = len(chunks)
+    assert total >= 3
+    device = _FakeDevice()
+    seen: list[int] = []
+
+    _make_executor(device, ErrorPolicy.ABORT).run(
+        chunks, ProgressState(), progress_callback=lambda p: seen.append(p.chunks_sent)
+    )
+
+    # One push per chunk (1..total) plus a terminal push at the final count.
+    assert seen[-1] == total
+    assert seen == sorted(seen)  # monotonic non-decreasing
+    assert set(range(1, total + 1)) <= set(seen)
+
+
+def test_run_progress_callback_exception_does_not_disrupt_run():
+    program = parse_hpgl(b"SP1;PA0,0;PD10,10;PU;PA20,20;PD30,30;PU;")
+    chunks = plan_chunks(program, max_chunk_bytes=16)
+    device = _FakeDevice()
+
+    def boom(_progress):
+        raise RuntimeError("observer blew up")
+
+    # A faulty observer must not abort the plot or propagate.
+    progress = _make_executor(device, ErrorPolicy.ABORT).run(
+        chunks, ProgressState(), progress_callback=boom
+    )
+
+    assert progress.chunks_sent == progress.chunks_total
+    assert progress.finished_at is not None
+
+
+def test_run_progress_callback_fires_on_cancel():
+    program = parse_hpgl(b"SP1;PA0,0;PD100,100;PU;PA200,200;PD300,300;PU;")
+    chunks = plan_chunks(program, max_chunk_bytes=16)
+    device = _FakeDevice()
+    cancel = threading.Event()
+    cancel.set()
+    snapshots: list[bool] = []
+
+    _make_executor(device, ErrorPolicy.ABORT).run(
+        chunks,
+        ProgressState(),
+        cancel=cancel,
+        progress_callback=lambda p: snapshots.append(p.cancelled),
+    )
+
+    assert snapshots and snapshots[-1] is True  # terminal push reflects cancellation
+
+
+def test_plot_program_forwards_progress_callback():
+    device = get_device("hp7475a")
+    program = parse_hpgl(b"SP1;PA0,0;PD10,10;PU;PA20,20;PD30,30;PU;")
+    transport = _FakeDevice()
+    calls: list[int] = []
+
+    with transport:
+        plot_program(
+            transport, program, device,
+            progress_callback=lambda p: calls.append(p.chunks_sent),
+        )
+
+    assert calls  # the callback was invoked through plot_program
+    assert max(calls) == len(plan_chunks(program, max_chunk_bytes=256))
+
+
 def test_progress_to_dict_is_json_serializable():
     import json
 

@@ -42,6 +42,7 @@ def plot_program(
     query_timeout_seconds: float = 2.0,
     progress: ProgressState | None = None,
     cancel: threading.Event | None = None,
+    progress_callback: Callable[[ProgressState], None] | None = None,
 ) -> ProgressState:
     """Plan ``program`` for ``device`` and stream it over an open ``transport``.
 
@@ -55,6 +56,10 @@ def plot_program(
     drain), discards the buffer, parks the pen, and returns with
     ``progress.cancelled`` set. Only this call reads the event, so the transport
     stays owned by the running thread.
+
+    ``progress_callback``, if given, is invoked with ``progress`` after each chunk
+    and at the terminal state - a push alternative to polling ``progress``. It is
+    an observer only; exceptions it raises are logged and swallowed.
     """
     if progress is None:
         progress = ProgressState()
@@ -91,5 +96,5 @@ def plot_program(
         send_block_bytes=send_block_bytes,
         verify_mode=verify_mode,
     )
-    executor.run(chunks, progress, cancel=cancel)
+    executor.run(chunks, progress, cancel=cancel, progress_callback=progress_callback)
     return progress
