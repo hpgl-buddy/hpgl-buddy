@@ -4,7 +4,7 @@
 [![Python versions](https://img.shields.io/pypi/pyversions/hpgl-buddy.svg)](https://pypi.org/project/hpgl-buddy/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/hpgl-buddy/hpgl-buddy/blob/master/LICENSE)
 
-![HP 7475A Plotter](https://hpgl-buddy.github.io/static/hp7475a-plotting-loop.gif)
+![HP 7475A Plotter](https://hpgl-buddy.github.io/static/hp7475a-plotting-frame.png)
 
 Carefree, observable plotting of HP-GL files on HP pen plotters over RS-232.
 
