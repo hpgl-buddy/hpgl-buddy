@@ -53,6 +53,9 @@ class ProgressState:
     # Wall-clock epochs for the JSON report (monotonic clocks are not wall time).
     started_wall: float = field(default_factory=time.time)
     finished_wall: float | None = None
+    # Set when a run is stopped early via a cancel request - a normal outcome,
+    # not an error (the buffer is discarded and the pen parked on the way out).
+    cancelled: bool = False
 
     def record_chunk_sent(self, instruction_count: int, byte_count: int) -> None:
         self.chunks_sent += 1
@@ -82,6 +85,7 @@ class ProgressState:
             "chunks_sent": self.chunks_sent,
             "bytes_sent": self.bytes_sent,
             "bytes_per_second": bytes_per_second,
+            "cancelled": self.cancelled,
             "recovered_errors": [error.to_dict() for error in self.recovered_errors],
             "warnings": list(self.warnings),
         }
@@ -95,6 +99,8 @@ class ProgressState:
         lines.append(f"  Chunks       : {self.chunks_sent} / {self.chunks_total} sent")
         lines.append(f"  Bytes        : {self.bytes_sent}")
         lines.append(f"  Elapsed      : {self.elapsed_seconds:.2f} s")
+        if self.cancelled:
+            lines.append("  Cancelled    : yes (stopped before completion)")
         lines.append(f"  Recovered    : {len(self.recovered_errors)} error(s)")
         for recovery in self.recovered_errors:
             lines.append(

@@ -9,6 +9,7 @@ executor.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 
 from ..errors import BufferPolicyError
@@ -57,7 +58,12 @@ class FlowController:
             self.transport, escape.output_extended_status(), self.query_timeout_seconds
         )
 
-    def wait_until_drained(self, timeout_seconds: float, heartbeat_seconds: float = 5.0) -> int:
+    def wait_until_drained(
+        self,
+        timeout_seconds: float,
+        heartbeat_seconds: float = 5.0,
+        cancel: threading.Event | None = None,
+    ) -> int:
         """Block until the buffer is empty (all commands consumed), via ESC.O.
 
         Used before the final completion tailgate so it only has to absorb the
@@ -65,7 +71,8 @@ class FlowController:
         when pen (carousel) changes are queued. ESC.O bit 3 is the authoritative
         "buffer empty" signal (unlike the ESC.B plateau, which stalls
         unreliably during slow pen changes). ESC.B free space is logged at INFO
-        for progress. Returns on drain, or on timeout (logged).
+        for progress. Returns on drain, on timeout (logged), or as soon as
+        ``cancel`` is set - the caller is responsible for the abort afterwards.
         """
         deadline = time.monotonic() + timeout_seconds
         previous_free: int | None = None
@@ -73,6 +80,9 @@ class FlowController:
         while True:
             free = self.read_free_space()
             now = time.monotonic()
+            if cancel is not None and cancel.is_set():
+                logger.info("Drain wait interrupted by cancel request")
+                return free
             if free != previous_free:
                 logger.info(
                     "Plotter drawing; buffer %d / %d bytes free",

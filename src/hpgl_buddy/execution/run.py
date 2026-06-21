@@ -17,6 +17,7 @@ logs; it writes nothing to stdout or disk.
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 
 from ..devices import Device
@@ -40,6 +41,7 @@ def plot_program(
     prompt_handler: Callable[[Chunk, int, str, str], str] | None = None,
     query_timeout_seconds: float = 2.0,
     progress: ProgressState | None = None,
+    cancel: threading.Event | None = None,
 ) -> ProgressState:
     """Plan ``program`` for ``device`` and stream it over an open ``transport``.
 
@@ -47,6 +49,12 @@ def plot_program(
     is plotted as given - validating it (and deciding whether it may plot) is the
     caller's responsibility. Returns the ``progress`` passed in, or a fresh one,
     so a caller on another thread can poll the same instance while the run runs.
+
+    Pass a :class:`threading.Event` as ``cancel`` to stop early: setting it from
+    another thread halts the run at the next chunk boundary (or during the final
+    drain), discards the buffer, parks the pen, and returns with
+    ``progress.cancelled`` set. Only this call reads the event, so the transport
+    stays owned by the running thread.
     """
     if progress is None:
         progress = ProgressState()
@@ -83,5 +91,5 @@ def plot_program(
         send_block_bytes=send_block_bytes,
         verify_mode=verify_mode,
     )
-    executor.run(chunks, progress)
+    executor.run(chunks, progress, cancel=cancel)
     return progress

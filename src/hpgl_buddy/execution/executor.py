@@ -18,6 +18,7 @@ space, so the pen is never starved):
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 from enum import Enum
 
@@ -172,6 +173,17 @@ class Executor:
         except Exception:  # best-effort safety action
             logger.exception("Failed to park the pen during abort")
 
+    def _abort_for_cancel(self, progress: ProgressState) -> None:
+        """Stop a run on request: discard the buffer and park the pen.
+
+        Cancellation is a normal outcome, not an error, so this records the state
+        on ``progress`` and returns rather than raising. ``_park_pen`` issues
+        ESC.K (discard the buffered draw) then PU (lift the pen)."""
+        logger.warning("Plot cancelled; discarding the buffer and parking the pen")
+        self._park_pen()
+        progress.cancelled = True
+        progress.finish()
+
     @staticmethod
     def _span_label(span: list[Chunk]) -> str:
         if len(span) == 1:
@@ -309,7 +321,13 @@ class Executor:
 
     # --- main loop ---------------------------------------------------------
 
-    def run(self, chunks: list[Chunk], progress: ProgressState) -> ProgressState:
+    def run(
+        self,
+        chunks: list[Chunk],
+        progress: ProgressState,
+        *,
+        cancel: threading.Event | None = None,
+    ) -> ProgressState:
         """Stream chunks under flow control, the environmental watch, and the
         optional one-deep HP-GL verification.
 
@@ -320,6 +338,12 @@ class Executor:
         next chunk is already buffered and drawing - so we learn the previous
         verdict without stalling the pen. A trailing tailgate collects the last
         pending verdict and confirms completion.
+
+        If ``cancel`` is provided and becomes set, the run stops at the next
+        chunk boundary (or during the drain wait): the buffer is discarded, the
+        pen parked, ``progress.cancelled`` set, and the partial progress
+        returned. The event is only ever read here; the caller (e.g. a GUI
+        thread) sets it, so the transport stays single-owner.
         """
         progress.chunks_total = len(chunks)
         progress.instructions_total = sum(len(chunk.instructions) for chunk in chunks)
@@ -339,6 +363,9 @@ class Executor:
         last_chunk: Chunk | None = None
 
         for chunk in chunks:
+            if cancel is not None and cancel.is_set():
+                self._abort_for_cancel(progress)
+                return progress
             logger.info(
                 "Streaming chunk #%d: %d instruction(s), %d byte(s), pen_up=%s",
                 chunk.index,
@@ -388,8 +415,14 @@ class Executor:
         # backlog), then the trailing tailgate only waits for the final pen
         # motion before confirming completion.
         if last_chunk is not None:
+            if cancel is not None and cancel.is_set():
+                self._abort_for_cancel(progress)
+                return progress
             logger.info("All chunks sent; waiting for the plotter to finish")
-            self.flow.wait_until_drained(self.drain_timeout_seconds)
+            self.flow.wait_until_drained(self.drain_timeout_seconds, cancel=cancel)
+            if cancel is not None and cancel.is_set():
+                self._abort_for_cancel(progress)
+                return progress
             self.transport.write(tailgate_command())
             self._read_verdict(unverified, progress, final=True)
 

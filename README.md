@@ -163,7 +163,9 @@ demo/       demo HP-GL generators
 ```
 
 The full design rationale, with HP manual citations, lives in
-[`DESIGN.md`](https://github.com/hpgl-buddy/hpgl-buddy/blob/master/DESIGN.md).
+[`DESIGN.md`](https://github.com/hpgl-buddy/hpgl-buddy/blob/master/DESIGN.md). To embed
+hpgl-buddy as a library (e.g. a GUI), see
+[`INTEGRATION.md`](https://github.com/hpgl-buddy/hpgl-buddy/blob/master/INTEGRATION.md).
 
 ### Extending
 

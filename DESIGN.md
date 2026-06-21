@@ -98,7 +98,8 @@ for situational awareness and by the standalone ad-hoc healthcheck command.
 
 ```
 src/hpgl_buddy/
-  __init__.py
+  __init__.py            Public API surface: re-exports the supported library names
+                         (get_device, parse_hpgl, plot_program, ...). See INTEGRATION.md.
   cli.py                 CLI entry (subcommands; argparse, stdlib only - no runtime deps
                          beyond pyserial). See section 11.
   logging_setup.py       Central logging config; ascii+hex helpers for DEBUG.
@@ -124,6 +125,8 @@ src/hpgl_buddy/
     planner.py           Program -> Chunk list (pen-up boundary aware).
     flow_control.py      ESC.B polling + XON/XOFF policy.
     executor.py          Sends chunks, confirms no error, tracks progress.
+    run.py               plot_program(): orchestration entry (chunk sizing + planning +
+                         flow/executor wiring) shared by the CLI and library callers.
     progress.py          ProgressState / queue + run statistics for the report.
 
   status/
@@ -247,8 +250,15 @@ an `ESC.B` drain threshold.
   geometry after `IN` would be misplaced. (Task-1 scope: replay the tracked subset; log
   loudly if a command we cannot model preceded the failure.)
 - **Progress + report:** ProgressState yields instructions sent / remaining, chunk
-  count, elapsed time, ESC exchange log, recovered errors, and warnings - emitted as the
-  end-of-run report (README "Report" section).
+  count, elapsed time, ESC exchange log, recovered errors, warnings, and a `cancelled`
+  flag - emitted as the end-of-run report (README "Report" section).
+- **Cooperative cancellation.** `Executor.run` / `plot_program` accept an optional
+  `threading.Event`; when set from another thread (e.g. a GUI Stop button) the run halts
+  at the next chunk boundary or during the drain wait, issues `ESC.K` + `PU` (discard
+  buffer, park pen), sets `ProgressState.cancelled`, and returns the partial progress
+  rather than raising - cancellation is a normal outcome. The event is read only by the
+  running thread, so the transport stays single-owner. `cancel=None` is the unchanged
+  default and keeps CLI behavior identical.
 
 **OPEN:** exact contents of the replayed state preamble (which mnemonics to track);
 start with `SC`/`IP`/`RO`/`SP`/`IW`/last pen position, expand as real files demand.
@@ -391,6 +401,11 @@ before relying on them.)
     `--pens` clamped 1-6. Output passes the offline syntax check.
   - `monitor`: `monitor watch` streams the device echo and logs every byte as
     binary + hex + decimal + ASCII/control-name (one row per symbol).
+- Milestone 3 (library-integration prep): in progress.
+  - `execution/run.py` `plot_program()` centralizes the plot orchestration (chunk
+    sizing, planning, flow/executor wiring), shared by the CLI and external callers
+    (issue #9); the top-level package re-exports the supported API; cooperative
+    cancellation via a `threading.Event`. See TASK-2 and INTEGRATION.md.
 
 ## 17. Still open
 

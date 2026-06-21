@@ -38,13 +38,15 @@ Design the UI around these. Items marked *(roadmap)* are being addressed but are
    string. Discover ports in the UI, per platform, with pyserial:
    `serial.tools.list_ports.comports()`. Then pass the chosen device path to
    `SerialTransport`. (This is deliberate - port discovery is platform-specific.)
-2. **No way to stop a plot once started.** *(roadmap)* `plot_program` /
-   `Executor.run` run to completion or raise. There is currently **no** cooperative
-   "Stop" hook and no clean operator abort. Do **not** close the transport from
-   another thread to force a stop - it will raise mid-write and leave the pen down
-   and the buffer in an unknown state. The only built-in halt is device-driven:
-   with `ErrorPolicy.ABORT`, a device fault parks the pen (PU) and raises
-   `DeviceError`.
+2. **Stop a plot with a `threading.Event`, not by closing the port.** Pass a
+   `cancel=threading.Event()` to `plot_program`; set it from the UI thread to stop
+   at the next chunk boundary (or during the final drain). The buffer is discarded
+   (ESC.K), the pen parked (PU), and the call returns with `progress.cancelled`
+   set - cancellation is a normal outcome, not an exception. Only the worker reads
+   the event, so the transport stays single-owner. Do **not** close the transport
+   from another thread to force a stop - that raises mid-write and leaves the pen
+   down and the buffer in an unknown state. (Cancellation latency is at most one
+   in-flight chunk, ~256 bytes.)
 3. **All calls block.** Run anything that touches the port (status, plot) on a
    worker thread; never on the UI thread.
 4. **Progress is poll-based.** *(push callback is roadmap.)* Pass your own
@@ -101,7 +103,7 @@ transport = SerialTransport(
 # Use as a context manager, or call transport.open() / transport.close() yourself.
 ```
 
-### 4. Retrieve status (healthcheck)
+### 4. Retrieve device status (healthcheck)
 
 ```python
 from hpgl_buddy import run_healthcheck
@@ -163,7 +165,8 @@ def run_plot(port, path, on_done):
         on_done(error="syntax errors; aborting"); return
 
     progress = ProgressState()          # <-- poll THIS from the UI thread
-    result = {"progress": progress}
+    cancel = threading.Event()          # <-- a Stop button calls cancel.set()
+    result = {"progress": progress, "cancel": cancel}
 
     def worker():
         try:
@@ -173,24 +176,29 @@ def run_plot(port, path, on_done):
                     verify_mode=VerifyMode.OFF,      # OFF | CHUNK | PU
                     error_policy=ErrorPolicy.ABORT,  # ABORT | PROMPT | CONTINUE
                     progress=progress,
+                    cancel=cancel,
                 )
-            on_done(error=None, progress=progress)
+            on_done(error=None, progress=progress)   # progress.cancelled tells stopped vs done
         except (DeviceError, TransportError, HpglBuddyError) as exc:
             on_done(error=str(exc), progress=progress)
 
     threading.Thread(target=worker, daemon=True).start()
     return result
 
+# Stop button handler (UI thread):  result["cancel"].set()
+#
 # In the UI thread, on a timer, read the shared instance:
 #   pct = 100 * progress.chunks_sent / max(1, progress.chunks_total)
 #   label = f"{progress.instructions_sent}/{progress.instructions_total} instr, " \
 #           f"{progress.bytes_sent} bytes, {progress.elapsed_seconds:.0f}s"
-# When finished, progress.to_dict() gives a JSON-ready run report.
+# When the run ends, progress.cancelled is True if it was stopped early, and
+# progress.to_dict() gives a JSON-ready run report.
 ```
 
 PyQt mapping: run `worker` in a `QThread` (or `QThreadPool`), drive the progress
-bar from a `QTimer` reading `progress`, and emit a signal from `on_done`. Keep the
-`SerialTransport` and `plot_program` call entirely on the worker thread.
+bar from a `QTimer` reading `progress`, wire a Stop button to `cancel.set()`, and
+emit a signal from `on_done`. Keep the `SerialTransport` and `plot_program` call
+entirely on the worker thread.
 
 ### 8. Interactive error handling (optional)
 

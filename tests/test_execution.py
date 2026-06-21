@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+
 from hpgl_buddy.demo import generate_demo
 from hpgl_buddy.devices import get_device
 from hpgl_buddy.execution import (
@@ -536,6 +538,102 @@ def test_plot_program_sizes_send_blocks_to_keep_verify_on_the_no_stall_path():
     assert transport.collisions == 0
     assert progress.chunks_sent == progress.chunks_total
     assert b"".join(transport.data_writes) == b"".join(i.raw_bytes for i in program)
+
+
+class _CancelAfterFirstChunk(_FakeDevice):
+    """Sets a cancel event the moment the first real chunk is written, so the
+    executor sees it set at the top of the next loop iteration."""
+
+    def __init__(self, event: threading.Event, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._event = event
+
+    def _write(self, data: bytes) -> int:
+        written = super()._write(data)
+        # Only data writes land in data_writes; trip the cancel on the first one
+        # that is not the abort sequence the cancel itself will emit.
+        if (
+            not self._event.is_set()
+            and self.data_writes
+            and data not in (escape.abort_graphics(), b"PU;")
+            and self.data_writes[-1] == data
+        ):
+            self._event.set()
+        return written
+
+
+class _NeverDrainsDevice(_FakeDevice):
+    """ESC.O never reports bit 3 (buffer empty), so wait_until_drained would
+    spin until its timeout unless something else (a cancel) breaks the loop."""
+
+    def _write(self, data: bytes) -> int:
+        if data == escape.output_extended_status():
+            self._response = bytearray(b"0\r")  # no buffer-empty bit
+            return len(data)
+        return super()._write(data)
+
+
+def test_run_cancel_before_start_parks_pen_and_marks_cancelled():
+    program = parse_hpgl(b"SP1;PA0,0;PD100,100;PU;PA200,200;PD300,300;PU;")
+    chunks = plan_chunks(program, max_chunk_bytes=16)
+    assert len(chunks) > 1
+    device = _FakeDevice()
+    cancel = threading.Event()
+    cancel.set()  # already requested before the first chunk
+
+    progress = _make_executor(device, ErrorPolicy.ABORT).run(
+        chunks, ProgressState(), cancel=cancel
+    )
+
+    assert progress.cancelled is True
+    assert progress.to_dict()["cancelled"] is True
+    assert progress.chunks_sent == 0  # nothing streamed
+    # The clean abort discarded the buffer (ESC.K) and lifted the pen (PU).
+    assert escape.abort_graphics() in device.data_writes
+    assert b"PU;" in device.data_writes
+
+
+def test_run_cancel_midway_stops_after_current_chunk():
+    program = parse_hpgl(b"SP1;PA0,0;PD10,10;PU;PA20,20;PD30,30;PU;PA40,40;PD50,50;PU;")
+    chunks = plan_chunks(program, max_chunk_bytes=16)
+    assert len(chunks) >= 3
+    cancel = threading.Event()
+    device = _CancelAfterFirstChunk(cancel)
+
+    progress = _make_executor(device, ErrorPolicy.ABORT).run(
+        chunks, ProgressState(), cancel=cancel
+    )
+
+    assert progress.cancelled is True
+    assert progress.chunks_sent == 1  # stopped at the next boundary
+    assert progress.chunks_sent < progress.chunks_total
+    assert escape.abort_graphics() in device.data_writes
+    assert b"PU;" in device.data_writes
+
+
+def test_wait_until_drained_returns_promptly_on_cancel():
+    device = _NeverDrainsDevice()
+    flow = FlowController(device, buffer_size_bytes=1024, poll_interval_seconds=0)
+    cancel = threading.Event()
+    cancel.set()
+    with device:
+        # Would otherwise spin until the 30 s timeout; cancel must break it.
+        free = flow.wait_until_drained(timeout_seconds=30.0, cancel=cancel)
+    assert isinstance(free, int)
+
+
+def test_plot_program_forwards_cancel():
+    device = get_device("hp7475a")
+    program = parse_hpgl(b"SP1;PA0,0;PD100,100;PU;PA200,200;PD300,300;PU;")
+    transport = _FakeDevice()
+    cancel = threading.Event()
+    cancel.set()
+
+    with transport:
+        progress = plot_program(transport, program, device, cancel=cancel)
+
+    assert progress.cancelled is True
+    assert progress.chunks_sent == 0
 
 
 def test_progress_to_dict_is_json_serializable():
