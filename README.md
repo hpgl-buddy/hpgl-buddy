@@ -1,8 +1,10 @@
 # hpgl-buddy
 
+[![Tests](https://img.shields.io/github/actions/workflow/status/hpgl-buddy/hpgl-buddy/test.yml?branch=master&label=tests)](https://github.com/hpgl-buddy/hpgl-buddy/actions/workflows/test.yml)
 [![PyPI version](https://img.shields.io/pypi/v/hpgl-buddy.svg)](https://pypi.org/project/hpgl-buddy/)
 [![Python versions](https://img.shields.io/pypi/pyversions/hpgl-buddy.svg)](https://pypi.org/project/hpgl-buddy/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/hpgl-buddy/hpgl-buddy/blob/master/LICENSE)
+![Platforms: Linux | macOS | Windows](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)
 
 ![HP 7475A Plotter](https://hpgl-buddy.github.io/static/hp7475a-plotting-frame.png)
 

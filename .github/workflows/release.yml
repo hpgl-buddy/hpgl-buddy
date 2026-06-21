@@ -1,4 +1,4 @@
-name: release
+name: Release
 
 # Cuts a release when master moves to a version not yet tagged:
 #   read version.py -> if v<version> is not already a tag -> test, build

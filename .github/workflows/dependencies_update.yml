@@ -1,4 +1,4 @@
-name: dependencies_update
+name: Dependencies Update
 
 # Regenerate the fully-pinned requirement files from their rough sources:
 #   requirements-rough.txt      -> requirements.txt       (runtime)
