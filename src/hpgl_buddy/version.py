@@ -6,4 +6,4 @@ defined in exactly one place. Keep this a plain string literal so the build
 backend can parse it without importing the package.
 """
 
-__version__ = "1.6.1"
+__version__ = "1.7.0"

@@ -121,8 +121,12 @@ report.buffer_free_bytes     # int
 report.status_byte.active_flags if report.status_byte else []
 report.io_error_number       # 0 == OK
 report.hpgl_error_number     # 0 == OK
+report.extended_status       # ESC.O: .buffer_empty / .view_pressed / .paper_lever_raised
+report.ready_to_plot         # bool: no error pending and paper lever down (VIEW is transient)
 report.notes                 # list[str] of per-query problems
 # report.render() -> ready-made multi-line ASCII summary, if you just want text.
+# A GUI can gate its "Plot" button on report.ready_to_plot and surface
+# report.extended_status.paper_lever_raised as "load paper / lower the lever".
 ```
 
 ### 5. Offline syntax check

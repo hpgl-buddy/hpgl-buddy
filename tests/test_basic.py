@@ -104,11 +104,12 @@ class _FakeTransport(Transport):
 
 
 def test_healthcheck_interprets_canned_responses():
-    # Order matches run_healthcheck: ESC.E, ESC.L, ESC.B, OI, OS, OE, OA, OH.
+    # Order matches run_healthcheck: ESC.E, ESC.L, ESC.B, ESC.O, OI, OS, OE, OA, OH.
     transport = _FakeTransport([
         b"0\r",            # ESC.E -> no I/O error
         b"1024\r",         # ESC.L -> buffer size
         b"1000\r",         # ESC.B -> free bytes
+        b"8\r",            # ESC.O -> buffer empty, ready (no VIEW / paper lever)
         b"7475A\r",        # OI    -> identification
         b"24\r",           # OS    -> initialized + ready
         b"0\r",            # OE    -> no HP-GL error
@@ -119,10 +120,35 @@ def test_healthcheck_interprets_canned_responses():
     assert report.io_error_number == 0
     assert report.buffer_size_bytes == 1024
     assert report.buffer_free_bytes == 1000
+    assert report.extended_status.raw_value == 8
+    assert report.extended_status.buffer_empty is True
     assert report.identification == "7475A"
     assert report.status_byte.raw_value == 24
     assert report.hpgl_error_number == 0
     assert report.hard_clip_limits == [0, 0, 10300, 7650]
+    assert report.ready_to_plot is True
     assert not report.notes
     rendered = report.render()
     assert "1000 free of 1024 bytes" in rendered
+    assert "Ready to plot  : yes" in rendered
+
+
+def test_healthcheck_paper_lever_raised_is_not_ready():
+    # Same order; ESC.O = 32 means the paper lever / pinch wheels are raised, so
+    # the plotter is not ready even though every query answered cleanly.
+    transport = _FakeTransport([
+        b"0\r",               # ESC.E
+        b"1024\r",            # ESC.L
+        b"1024\r",            # ESC.B (empty)
+        b"32\r",              # ESC.O -> paper lever / pinch wheels raised
+        b"7475A\r",           # OI
+        b"8\r",               # OS    -> not ready bit set... value 8 (initialized)
+        b"0\r",               # OE
+        b"0,0,0\r",           # OA
+        b"0,0,10300,7650\r",  # OH
+    ])
+    report = run_healthcheck(transport, timeout_seconds=0.1)
+    assert report.extended_status.paper_lever_raised is True
+    assert report.ready_to_plot is False
+    assert not report.notes  # the exchange itself was clean
+    assert "Ready to plot  : NO" in report.render()

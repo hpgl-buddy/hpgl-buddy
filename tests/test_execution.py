@@ -15,6 +15,7 @@ from hpgl_buddy.execution import (
     plot_program,
 )
 from hpgl_buddy.execution.flow_control import FlowController
+from hpgl_buddy.errors import BufferPolicyError
 from hpgl_buddy.hpgl import check_program, parse_hpgl
 from hpgl_buddy.interface.base import Transport
 from hpgl_buddy.logging_setup import render_symbol
@@ -563,14 +564,159 @@ class _CancelAfterFirstChunk(_FakeDevice):
 
 
 class _NeverDrainsDevice(_FakeDevice):
-    """ESC.O never reports bit 3 (buffer empty), so wait_until_drained would
-    spin until its timeout unless something else (a cancel) breaks the loop."""
+    """ESC.O never reports bit 3 (buffer empty); with a constant free count the
+    buffer also never changes, so wait_until_drained relies on a cancel (or the
+    stall timeout) to break the loop."""
 
     def _write(self, data: bytes) -> int:
         if data == escape.output_extended_status():
             self._response = bytearray(b"0\r")  # no buffer-empty bit
             return len(data)
         return super()._write(data)
+
+
+class _DrainingDevice(_FakeDevice):
+    """ESC.B returns successive values from a free-space sequence (the last value
+    repeats), so a test can simulate a draining buffer or a frozen one. When
+    ``extended_status`` is given, ESC.O returns that fixed word (e.g. 16 = VIEW,
+    32 = paper lever) so the stall classifier can be exercised."""
+
+    def __init__(
+        self, free_sequence: list[int], *, extended_status: int | None = None, **kwargs
+    ) -> None:
+        super().__init__(**kwargs)
+        self._free_sequence = list(free_sequence)
+        self._extended_status = extended_status
+
+    def _write(self, data: bytes) -> int:
+        if data == escape.output_buffer_space():
+            value = (
+                self._free_sequence.pop(0)
+                if len(self._free_sequence) > 1
+                else self._free_sequence[0]
+            )
+            self._response = bytearray(f"{value}\r".encode())
+            return len(data)
+        if (
+            self._extended_status is not None
+            and data == escape.output_extended_status()
+        ):
+            self._response = bytearray(f"{self._extended_status}\r".encode())
+            return len(data)
+        return super()._write(data)
+
+
+def test_wait_for_space_returns_when_buffer_drains_to_needed():
+    # A draining buffer (free space changing each poll) must never trip the stall
+    # timeout - even a tiny one - because the stall clock resets on every change.
+    # reserve_bytes=0 isolates the stall-reset behavior from the safety margin.
+    device = _DrainingDevice(list(range(10, 300, 5)))  # 10,15,...,295
+    flow = FlowController(
+        device, buffer_size_bytes=1024, poll_interval_seconds=0,
+        stall_timeout_seconds=0.01, reserve_bytes=0,
+    )
+    with device:
+        free = flow.wait_for_space(255)
+    assert free >= 255  # returned on progress, no BufferPolicyError
+
+
+def test_wait_for_space_keeps_a_safety_reserve_free():
+    import pytest
+
+    # Field overflow: free == needed (the exact ESC.B boundary) overflowed the
+    # 7475A. With a reserve, free must exceed needed by the margin, so a buffer
+    # stuck at exactly `needed` free must NOT be accepted (it waits, then stalls).
+    device = _DrainingDevice([252])  # constant 252 free, exactly the chunk size
+    flow = FlowController(
+        device, buffer_size_bytes=1024, poll_interval_seconds=0,
+        stall_timeout_seconds=0.05, reserve_bytes=64,
+    )
+    with device:
+        with pytest.raises(BufferPolicyError):  # 252 < 252 + 64; never satisfied
+            flow.wait_for_space(252)
+
+
+def test_wait_for_space_returns_once_the_reserve_is_covered():
+    device = _DrainingDevice([400])  # 400 >= 252 + 64
+    flow = FlowController(
+        device, buffer_size_bytes=1024, poll_interval_seconds=0, reserve_bytes=64,
+    )
+    with device:
+        assert flow.wait_for_space(252) == 400
+
+
+def test_wait_for_space_rejects_a_request_that_cannot_fit_with_reserve():
+    import pytest
+
+    device = _DrainingDevice([1024])
+    flow = FlowController(
+        device, buffer_size_bytes=1024, poll_interval_seconds=0, reserve_bytes=128,
+    )
+    with device:
+        with pytest.raises(BufferPolicyError, match="cannot fit"):
+            flow.wait_for_space(1000)  # 1000 + 128 > 1024
+
+
+def test_wait_for_space_raises_when_buffer_stalls():
+    import pytest
+
+    # A frozen buffer below the needed amount is a genuine stall -> abort.
+    device = _DrainingDevice([100])  # constant 100 free, never enough
+    flow = FlowController(
+        device, buffer_size_bytes=1024, poll_interval_seconds=0,
+        stall_timeout_seconds=0.05,
+    )
+    with device:
+        with pytest.raises(BufferPolicyError, match="stalled"):
+            flow.wait_for_space(255)
+
+
+def test_wait_for_space_returns_on_cancel_without_raising():
+    device = _DrainingDevice([100])  # would otherwise stall
+    flow = FlowController(
+        device, buffer_size_bytes=1024, poll_interval_seconds=0,
+        stall_timeout_seconds=5.0,
+    )
+    cancel = threading.Event()
+    cancel.set()
+    with device:
+        free = flow.wait_for_space(255, cancel=cancel)
+    assert isinstance(free, int)  # cancelled, not stalled; caller aborts
+
+
+def test_wait_for_space_paper_lever_raise_names_the_fault():
+    import pytest
+
+    # A frozen buffer with ESC.O reporting the paper lever raised (32) is a real
+    # fault; the stall must name it rather than report a generic stall.
+    device = _DrainingDevice([100], extended_status=32)
+    flow = FlowController(
+        device, buffer_size_bytes=1024, poll_interval_seconds=0,
+        stall_timeout_seconds=0.05,
+    )
+    with device:
+        with pytest.raises(BufferPolicyError, match="paper lever"):
+            flow.wait_for_space(255)
+
+
+def test_wait_for_space_view_pause_is_not_a_stall():
+    # ESC.O reporting VIEW (16) with a frozen buffer is an operator pause, not a
+    # stall: wait_for_space must keep waiting across many stall windows and never
+    # raise. A timer releases it via cancel to end the test.
+    device = _DrainingDevice([100], extended_status=16)
+    flow = FlowController(
+        device, buffer_size_bytes=1024, poll_interval_seconds=0,
+        stall_timeout_seconds=0.02,
+    )
+    cancel = threading.Event()
+    releaser = threading.Timer(0.2, cancel.set)  # ~10 stall windows later
+    releaser.start()
+    try:
+        with device:
+            free = flow.wait_for_space(255, cancel=cancel)
+    finally:
+        releaser.cancel()
+    assert isinstance(free, int)  # waited through VIEW, then cancelled - no raise
 
 
 def test_run_cancel_before_start_parks_pen_and_marks_cancelled():
@@ -617,8 +763,8 @@ def test_wait_until_drained_returns_promptly_on_cancel():
     cancel = threading.Event()
     cancel.set()
     with device:
-        # Would otherwise spin until the 30 s timeout; cancel must break it.
-        free = flow.wait_until_drained(timeout_seconds=30.0, cancel=cancel)
+        # Would otherwise spin until the stall timeout; cancel must break it.
+        free = flow.wait_until_drained(cancel=cancel)
     assert isinstance(free, int)
 
 

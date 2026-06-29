@@ -15,7 +15,14 @@ from ..errors import HpglBuddyError
 from ..interface.base import Transport
 from . import escape
 from .exchange import query
-from .status_codes import StatusByte, interpret_hpgl_error, interpret_io_error, interpret_status_byte
+from .status_codes import (
+    ExtendedStatus,
+    StatusByte,
+    interpret_extended_status,
+    interpret_hpgl_error,
+    interpret_io_error,
+    interpret_status_byte,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +37,25 @@ class HealthReport:
     io_error_number: int | None = None
     hpgl_error_number: int | None = None
     status_byte: StatusByte | None = None
+    extended_status: ExtendedStatus | None = None
     hard_clip_limits: list[int] | None = None
     actual_position: list[int] | None = None
     notes: list[str] = field(default_factory=list)
+
+    @property
+    def ready_to_plot(self) -> bool:
+        """True when nothing in the report blocks plotting: no I/O or HP-GL error
+        and the paper lever / pinch wheels are down (paper gripped). VIEW being
+        pressed is a transient operator pause, not a hard block, so it does not
+        clear this. ``None`` (a query that did not answer) is treated optimistically.
+        """
+        if self.io_error_number not in (None, 0):
+            return False
+        if self.hpgl_error_number not in (None, 0):
+            return False
+        if self.extended_status is not None and self.extended_status.paper_lever_raised:
+            return False
+        return True
 
     def render(self) -> str:
         """Return a multi-line, ASCII-only human-readable summary."""
@@ -68,11 +91,19 @@ class HealthReport:
             flags = ", ".join(self.status_byte.active_flags) or "(none set)"
             lines.append(f"  Status byte    : {self.status_byte.raw_value} -> {flags}")
 
+        if self.extended_status is not None:
+            lines.append(
+                f"  Extended status: {self.extended_status.raw_value} -> "
+                f"{self.extended_status.description}"
+            )
+
         if self.actual_position is not None:
             lines.append(f"  Actual position: {self.actual_position}")
 
         if self.hard_clip_limits is not None:
             lines.append(f"  Hard-clip limit: {self.hard_clip_limits}")
+
+        lines.append(f"  Ready to plot  : {'yes' if self.ready_to_plot else 'NO'}")
 
         if self.notes:
             lines.append("  Notes:")
@@ -122,6 +153,17 @@ def run_healthcheck(transport: Transport, timeout_seconds: float = 2.0) -> Healt
         report.buffer_free_bytes = escape.parse_decimal(raw)
     except HpglBuddyError as exc:
         record_note(f"ESC.B (buffer space) query failed: {exc}")
+
+    try:
+        raw = _exchange(transport, escape.output_extended_status(), timeout_seconds)
+        report.extended_status = interpret_extended_status(escape.parse_decimal(raw))
+        logger.info(
+            "Extended status %d: %s",
+            report.extended_status.raw_value,
+            report.extended_status.description,
+        )
+    except HpglBuddyError as exc:
+        record_note(f"ESC.O (extended status) query failed: {exc}")
 
     # Buffered HP-GL queries.
     try:

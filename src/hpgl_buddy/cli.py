@@ -23,6 +23,10 @@ from . import __version__
 from .devices import get_device
 from .errors import HpglBuddyError
 from .execution import ErrorPolicy, ProgressState, VerifyMode, plot_program
+from .execution.flow_control import (
+    DEFAULT_BUFFER_RESERVE_BYTES,
+    DEFAULT_STALL_TIMEOUT_SECONDS,
+)
 from .demo import generate_demo, generate_scene
 from .hpgl import check_program, parse_hpgl
 from .interface import SerialTransport
@@ -105,9 +109,9 @@ def _handle_status(args: argparse.Namespace) -> int:
 
     if report.notes:
         return EXIT_FINDINGS
-    if report.io_error_number not in (None, 0):
-        return EXIT_FINDINGS
-    if report.hpgl_error_number not in (None, 0):
+    # A clean exchange that nonetheless reports the plotter is not ready to plot
+    # (I/O or HP-GL error pending, or the paper lever raised) is still a finding.
+    if not report.ready_to_plot:
         return EXIT_FINDINGS
     return EXIT_OK
 
@@ -190,6 +194,8 @@ def _handle_plot(args: argparse.Namespace) -> int:
             error_policy=policy,
             prompt_handler=_stdin_prompt if policy is ErrorPolicy.PROMPT else None,
             query_timeout_seconds=args.timeout,
+            stall_timeout_seconds=args.buffer_stall_timeout,
+            reserve_bytes=args.buffer_reserve,
             progress=progress,
         )
 
@@ -266,6 +272,8 @@ def build_parser() -> argparse.ArgumentParser:
     _add_serial_arguments(plot_parser)
     plot_parser.add_argument("--on-error", choices=["abort", "prompt", "continue"], default="abort", help="behavior on a reported error (default: abort)")
     plot_parser.add_argument("--ignore-syntax-errors", action="store_true", help="plot even if the offline syntax check finds errors")
+    plot_parser.add_argument("--buffer-stall-timeout", type=float, default=DEFAULT_STALL_TIMEOUT_SECONDS, metavar="SECONDS", help=f"abort if the device buffer shows no change for this long, i.e. the plotter stopped drawing (default: {DEFAULT_STALL_TIMEOUT_SECONDS:.0f}). Measured since the last buffer change, so a slow-but-drawing plot is never falsely aborted.")
+    plot_parser.add_argument("--buffer-reserve", type=int, default=DEFAULT_BUFFER_RESERVE_BYTES, metavar="BYTES", help=f"bytes of device buffer kept free at all times; the buffer is never filled to the exact ESC.B boundary, which overflows the 7475A (default: {DEFAULT_BUFFER_RESERVE_BYTES}).")
     plot_parser.add_argument("--stats-json", default=None, metavar="PATH", help="write run statistics as JSON to PATH ('-' for stdout)")
     plot_parser.add_argument("--live-hpgl-verify", choices=["off", "chunk", "pu"], default="off", help="live on-device HP-GL (OE) verification: off (env checks only, default); chunk (one-deep tailgate per pen-up chunk); pu (checkpoint at every pen-up). Environmental ESC.E/ESC.O checks are always on.")
     plot_parser.set_defaults(handler=_handle_plot)

@@ -132,7 +132,7 @@ src/hpgl_buddy/
   status/
     escape.py            ESC command builders + response parsers (ESC.B, ESC.@, ...).
     status_codes.py      OS status byte + OE error code interpretation.
-    adhoc.py             Healthcheck routine (OS, OE, ESC.B, identify), human report.
+    adhoc.py             Healthcheck (ESC.E/L/B/O, OI/OS/OE/OA/OH) + ready_to_plot.
 
   demo/
     generator.py         Builds demo HP-GL for a requested pen count (section 12).
@@ -182,12 +182,34 @@ an `ESC.B` drain threshold.
 - `planner` turns the Program into a queue of Chunks honoring section 3 rules.
 - **Command supply is gated only by buffer space.** Every write goes out in sub-blocks of
   at most `send_block_bytes` (<= the buffer), each gated by `wait_for_space(block)` which
-  polls `ESC.B` until `free_bytes >= block`, then writes. Nothing about pen state - just
-  "is there room?". This single gate keeps the pen fed (a long pen-down run streams as the
-  buffer drains, so it never underruns) and never stalls the pen. `send_block_bytes` is
-  sized to hold a whole chunk **plus** a prefixed verify tailgate (`chunk_budget + 64`), so
-  a tailgate-prefixed chunk is always one block - see the verify note below for why the
+  polls `ESC.B` until `free_bytes >= block + reserve`, then writes. Nothing about pen state
+  - just "is there room?". This single gate keeps the pen fed (a long pen-down run streams
+  as the buffer drains, so it never underruns) and never stalls the pen. `send_block_bytes`
+  is sized to hold a whole chunk **plus** a prefixed verify tailgate (`chunk_budget + 64`),
+  so a tailgate-prefixed chunk is always one block - see the verify note below for why the
   poll between sub-blocks must never fall inside a prefixed payload.
+- **Never fill to the exact `ESC.B` boundary - keep a reserve.** Filling the buffer to the
+  reported free count overflowed the 7475A on hardware (`ESC.B` said 252 free, a 252-byte
+  write reported `ESC.E=16` buffer overflow; the same size at 256 free survived on 4 bytes
+  of slack). The manual warns to "leave room for the overshoot" and the plotter's own XON
+  threshold is 128 bytes (p.162), so `wait_for_space` keeps `--buffer-reserve` bytes free
+  (default 128): it waits for `free >= block + reserve`, so used never exceeds
+  `capacity - reserve`. This caps the *top* of the buffer only; the pen is fed from the
+  bottom (never empty), so the reserve costs ~12% of look-ahead and no throughput that
+  matters.
+- **The buffer wait is stall-timed, not wall-clock-timed.** A dense or slow plot is
+  pen-speed-bound: the buffer can sit near-full and drain a byte at a time for minutes
+  (observed on hardware), so an absolute timeout false-aborts a healthy plot. Instead
+  `wait_for_space` (and the end-of-run drain) abort only when `ESC.B` shows **no change**
+  for `--buffer-stall-timeout` seconds - the clock resets on every change, so a
+  slow-but-drawing plot is never flagged. Both waits share one primitive
+  (`FlowController._poll_buffer`) that owns the poll loop, an INFO progress heartbeat,
+  the stall clock, and `cancel`. When the buffer does go flat, `ESC.O` classifies it: a
+  **VIEW** pause (16/24) is the operator deliberately suspending graphics, so it is *not*
+  a stall (keep waiting); a **raised paper lever** (32/40) is named in the abort;
+  **processing** (0/8) is genuinely ambiguous - the 7475A has no "pen moving" bit
+  (manual p.181), so a long single stroke holding the buffer flat past the timeout still
+  aborts. That residual case is a hardware limit, mitigated by the configurable timeout.
 - **Oversized instructions (> buffer) are streamed, not split.** An instruction larger
   than a whole chunk is emitted as one `oversized` chunk; the sub-block sender above feeds
   its raw bytes in `ESC.B`-gated pieces. The plotter parses the byte stream incrementally
@@ -412,7 +434,8 @@ before relying on them.)
 
 ## 17. Still open
 
-- ESC.B poll cadence + safety-margin bytes (§6) - tune on hardware.
+- ESC.B safety-margin bytes (§6): **resolved** - a 128-byte reserve (`--buffer-reserve`)
+  prevents the at-boundary overflow seen on hardware; tune per device if needed.
 - State-preamble replay is currently optimistic (folds in all sent state
   instructions); confirm the tracked mnemonic set and roll-back semantics
   against real files (§7).

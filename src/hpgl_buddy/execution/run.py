@@ -40,6 +40,8 @@ def plot_program(
     error_policy: ErrorPolicy = ErrorPolicy.ABORT,
     prompt_handler: Callable[[Chunk, int, str, str], str] | None = None,
     query_timeout_seconds: float = 2.0,
+    stall_timeout_seconds: float | None = None,
+    reserve_bytes: int | None = None,
     progress: ProgressState | None = None,
     cancel: threading.Event | None = None,
     progress_callback: Callable[[ProgressState], None] | None = None,
@@ -52,10 +54,16 @@ def plot_program(
     so a caller on another thread can poll the same instance while the run runs.
 
     Pass a :class:`threading.Event` as ``cancel`` to stop early: setting it from
-    another thread halts the run at the next chunk boundary (or during the final
-    drain), discards the buffer, parks the pen, and returns with
+    another thread halts the run at the next chunk boundary (or during a buffer
+    wait or the final drain), discards the buffer, parks the pen, and returns with
     ``progress.cancelled`` set. Only this call reads the event, so the transport
     stays owned by the running thread.
+
+    ``stall_timeout_seconds`` bounds how long the buffer may show no change before
+    the plotter is treated as stalled (a slow-but-drawing plot keeps the buffer
+    moving and is never falsely aborted). ``reserve_bytes`` is kept free at all
+    times so the buffer is never filled to the exact ESC.B boundary (which
+    overflowed the 7475A on hardware). ``None`` uses the flow controller's defaults.
 
     ``progress_callback``, if given, is invoked with ``progress`` after each chunk
     and at the terminal state - a push alternative to polling ``progress``. It is
@@ -83,10 +91,18 @@ def plot_program(
         break_on_pen_up=(verify_mode is VerifyMode.PU),
     )
 
+    # Only override the flow controller's defaults when asked, so each default
+    # lives in one place (flow_control.DEFAULT_*).
+    flow_kwargs: dict[str, float | int] = {}
+    if stall_timeout_seconds is not None:
+        flow_kwargs["stall_timeout_seconds"] = stall_timeout_seconds
+    if reserve_bytes is not None:
+        flow_kwargs["reserve_bytes"] = reserve_bytes
     flow_controller = FlowController(
         transport,
         buffer_size_bytes=device.buffer_bytes,
         query_timeout_seconds=query_timeout_seconds,
+        **flow_kwargs,
     )
     executor = Executor(
         transport,

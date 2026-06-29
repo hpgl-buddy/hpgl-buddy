@@ -85,7 +85,6 @@ class Executor:
         error_policy: ErrorPolicy = ErrorPolicy.ABORT,
         prompt_handler: Callable[[Chunk, int, str, str], str] | None = None,
         sync_timeout_seconds: float = 90.0,
-        drain_timeout_seconds: float = 600.0,
         send_block_bytes: int = 256,
         verify_mode: VerifyMode = VerifyMode.OFF,
     ) -> None:
@@ -93,11 +92,11 @@ class Executor:
         self.flow = flow_controller
         self.error_policy = error_policy
         self.prompt_handler = prompt_handler
-        # sync = how long a single tailgate reply may take (one pen motion).
-        # drain = how long the whole remaining draw may take before the final
-        # tailgate (pen-change-heavy plots can run minutes).
+        # sync = how long a single tailgate reply may take (one pen motion). The
+        # buffer-drain wait has no absolute budget: it is governed by the flow
+        # controller's stall timeout (no progress = stalled), like every other
+        # buffer wait.
         self.sync_timeout_seconds = sync_timeout_seconds
-        self.drain_timeout_seconds = drain_timeout_seconds
         # Max bytes written per ESC.B-gated sub-block. Must be <= the device
         # buffer; an instruction larger than the buffer is streamed across
         # several of these (see _send_raw).
@@ -129,7 +128,7 @@ class Executor:
 
     # --- low-level send ----------------------------------------------------
 
-    def _send_raw(self, data: bytes) -> None:
+    def _send_raw(self, data: bytes, *, cancel: threading.Event | None = None) -> bool:
         """Write bytes to the device, paced so the buffer never overflows.
 
         Sent in sub-blocks of at most ``send_block_bytes`` (<= the device
@@ -137,14 +136,24 @@ class Executor:
         than the buffer is thus streamed across several sub-blocks without being
         split as HP-GL - the plotter reassembles partial numbers from the byte
         stream as it parses. This is how oversized instructions are plotted.
+
+        ``cancel`` is checked before each block and after each (possibly long)
+        buffer wait, so a stop request is honoured promptly even mid-stream.
+        Returns True if all of ``data`` was sent, or False if cancelled mid-send
+        (the caller then aborts; any partial buffer is discarded by ESC.K).
         """
         offset = 0
         total = len(data)
         while offset < total:
+            if cancel is not None and cancel.is_set():
+                return False
             block = data[offset : offset + self.send_block_bytes]
-            self.flow.wait_for_space(len(block))
+            self.flow.wait_for_space(len(block), cancel=cancel)
+            if cancel is not None and cancel.is_set():
+                return False  # cancelled while waiting; do not write this block
             self.transport.write(block)
             offset += len(block)
+        return True
 
     # --- recovery / abort --------------------------------------------------
 
@@ -404,14 +413,20 @@ class Executor:
                     # token, desyncing the verdict). Read the pending verdict
                     # standalone first instead (it blocks until the previous
                     # chunk finished drawing), then stream the chunk on its own.
-                    self._send_raw(tailgate)
+                    if not self._send_raw(tailgate, cancel=cancel):
+                        self._abort_for_cancel(progress)
+                        notify()
+                        return progress
                     self._read_verdict(unverified, progress, final=False)
                     unverified = []
                 else:
                     payload = tailgate + chunk.raw_bytes
                     span_to_verify = unverified
 
-            self._send_raw(payload)
+            if not self._send_raw(payload, cancel=cancel):
+                self._abort_for_cancel(progress)
+                notify()
+                return progress
             progress.record_chunk_sent(len(chunk.instructions), chunk.byte_size)
             self._track_state(chunk)
             last_chunk = chunk
@@ -438,7 +453,7 @@ class Executor:
                 notify()
                 return progress
             logger.info("All chunks sent; waiting for the plotter to finish")
-            self.flow.wait_until_drained(self.drain_timeout_seconds, cancel=cancel)
+            self.flow.wait_until_drained(cancel=cancel)
             if cancel is not None and cancel.is_set():
                 self._abort_for_cancel(progress)
                 notify()

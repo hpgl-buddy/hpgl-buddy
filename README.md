@@ -209,6 +209,10 @@ not reachable from a container).
 Conventions: extensive logging (no `print`), ASCII-only output, descriptive names, and
 errors that state what happened, where, and why.
 
+## References and Attributions
+
+* Logo is rendered out of a picture from Ed Nisley's Blog: https://softsolder.com/2015/04/21/hp-7475a-plotter-oem-pen-body-model/
+
 ## Vibe-code disclosure
 
 This library is written heavily with Claude. The design is decided upon by the initial human-author. All hands-on tests are conducted by a human-operator.
